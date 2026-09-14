@@ -123,7 +123,7 @@ przyjdą nowe dane (i przestaje po 8 s, gdy API milczy).
 ## Instalacja
 
 Pobierz `ClaudeStatusOverlay-Setup-<wersja>.exe` z
-[wydań](https://github.com/OWNER/REPO/releases) i uruchom. Kreator ma dwa
+[wydań](https://github.com/mcskypl/claude-status-overlay/releases) i uruchom. Kreator ma dwa
 kliknięcia: pyta tylko o autostart (i o usunięcie starej wersji PowerShellowej,
 jeśli ją znajdzie). Nie wymaga uprawnień administratora.
 
@@ -160,7 +160,7 @@ powershell -ExecutionPolicy Bypass -File .\Build-Release.ps1        # instalator
 ## Aktualizacje
 
 Nakładka raz na dobę pyta publiczne API GitHuba o najnowsze wydanie
-(`/repos/OWNER/REPO/releases/latest`) - bez tokena, bez wysyłania czegokolwiek
+(`/repos/mcskypl/claude-status-overlay/releases/latest`) - bez tokena, bez wysyłania czegokolwiek
 o Tobie. Gdy wersja z tagu jest wyższa niż ta, która chodzi:
 
 - na dole panelu pojawia się wiersz **„nowa wersja 2.1.0 - zaktualizuj"**,
@@ -251,8 +251,9 @@ skrypt przydaje się tylko przy zmianie wyglądu.
 
 Repozytorium, z którego nakładka bierze aktualizacje, siedzi w jednym miejscu:
 `UpdateSource.Repo` w [`src/ClaudeStatus.Core/Update/UpdateSource.cs`](src/ClaudeStatus.Core/Update/UpdateSource.cs).
-Dopóki stoi tam `OWNER/REPO`, sprawdzanie aktualizacji jest wyłączone i nakładka
-nie rusza w tej sprawie sieci.
+Po sforkowaniu wystarczy podmienić tam „właściciel/nazwa"; wartość zastępcza
+z `OWNER` wyłącza sprawdzanie aktualizacji i wtedy nakładka nie rusza w tej
+sprawie sieci.
 
 ## Demo
 

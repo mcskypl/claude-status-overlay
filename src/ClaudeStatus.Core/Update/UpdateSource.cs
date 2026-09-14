@@ -13,7 +13,7 @@ namespace ClaudeStatus.Core.Update;
 public static class UpdateSource
 {
     /// <summary>Repozytorium w formie "właściciel/nazwa".</summary>
-    public const string Repo = "OWNER/REPO";
+    public const string Repo = "mcskypl/claude-status-overlay";
 
     public static bool Configured => !Repo.Contains("OWNER", StringComparison.Ordinal);
 

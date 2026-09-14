@@ -13,7 +13,7 @@
 #define AppExeName "ClaudeStatusOverlay.exe"
 #define HookExeName "ClaudeStatusHook.exe"
 #define AppPublisher "Claude Status Overlay"
-#define AppUrl "https://github.com/OWNER/REPO"
+#define AppUrl "https://github.com/mcskypl/claude-status-overlay"
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
