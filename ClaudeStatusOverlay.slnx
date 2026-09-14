@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ClaudeStatus.Core/ClaudeStatus.Core.csproj" />
+    <Project Path="src/ClaudeStatus.Hook/ClaudeStatus.Hook.csproj" />
+    <Project Path="src/ClaudeStatus.Overlay/ClaudeStatus.Overlay.csproj" />
+  </Folder>
+</Solution>

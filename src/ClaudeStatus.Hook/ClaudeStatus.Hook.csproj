@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ClaudeStatusHook</AssemblyName>
+    <Description>Hook Claude Code: zapisuje stan sesji dla nakładki.</Description>
+    <!-- hook odpala się przy każdej turze - im mniej roboty na starcie, tym lepiej -->
+    <TieredPGO>true</TieredPGO>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ClaudeStatus.Core\ClaudeStatus.Core.csproj" />
+  </ItemGroup>
+
+</Project>

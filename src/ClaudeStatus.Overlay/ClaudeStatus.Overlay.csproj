@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>ClaudeStatusOverlay</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Description>Pastylka statusu Claude Code w stylu notcha.</Description>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ClaudeStatus.Core\ClaudeStatus.Core.csproj" />
+  </ItemGroup>
+
+</Project>

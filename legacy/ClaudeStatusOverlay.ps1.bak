@@ -1,0 +1,424 @@
+﻿<#
+    ClaudeStatusOverlay.ps1
+    -----------------------
+    Mały pasek zawsze na wierzchu, pokazujący stan każdej sesji Claude Code.
+
+      szary   - bezczynny / świeżo otwarta sesja
+      żółty   - pracuje
+      zielony - skończył, odpowiedź gotowa
+      czerwony (miga) - czeka na Ciebie (zgoda na narzędzie / pytanie)
+      fioletowy - tura przerwana błędem
+
+    Sterowanie:
+      lewy przycisk  - przeciąganie paska / klik w wiersz aktywuje okno edytora
+      prawy przycisk - menu (dźwięki, zawsze na wierzchu, wyczyść, zamknij)
+#>
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# tylko jedna instancja nakładki
+$script:Mutex = New-Object System.Threading.Mutex($false, 'Global\ClaudeStatusOverlay_v1')
+if (-not $script:Mutex.WaitOne(0, $false)) {
+    exit 0
+}
+
+if (-not ('ClaudeOverlayWin32' -as [type])) {
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class ClaudeOverlayWin32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+}
+'@
+}
+
+# --------------------------------------------------------------------------- #
+#  Ścieżki i konfiguracja                                                      #
+# --------------------------------------------------------------------------- #
+$script:StatusDir = Join-Path $env:USERPROFILE '.claude\status'
+$script:CfgPath   = Join-Path $env:USERPROFILE '.claude\status-overlay.config.json'
+
+if (-not (Test-Path -LiteralPath $script:StatusDir)) {
+    New-Item -ItemType Directory -Path $script:StatusDir -Force | Out-Null
+}
+
+$script:Cfg = @{ X = 60; Y = 60; Opacity = 0.93; Sound = $true; Width = 330; TopMost = $true }
+if (Test-Path -LiteralPath $script:CfgPath) {
+    try {
+        $loaded = Get-Content -LiteralPath $script:CfgPath -Raw | ConvertFrom-Json
+        foreach ($k in @('X', 'Y', 'Opacity', 'Sound', 'Width', 'TopMost')) {
+            if ($null -ne $loaded.$k) { $script:Cfg[$k] = $loaded.$k }
+        }
+    } catch { }
+}
+
+function Save-OverlayConfig {
+    try {
+        ($script:Cfg | ConvertTo-Json -Depth 3) |
+            Set-Content -LiteralPath $script:CfgPath -Encoding UTF8 -Force
+    } catch { }
+}
+
+# --------------------------------------------------------------------------- #
+#  Paleta stanów                                                               #
+# --------------------------------------------------------------------------- #
+$script:Palette = @{
+    'idle'      = @{ Color = [System.Drawing.Color]::FromArgb(125, 130, 140); Label = 'bezczynny';       Order = 4 }
+    'working'   = @{ Color = [System.Drawing.Color]::FromArgb(240, 176, 40);  Label = 'pracuje';         Order = 2 }
+    'done'      = @{ Color = [System.Drawing.Color]::FromArgb(64, 200, 112);  Label = 'gotowe';          Order = 3 }
+    'attention' = @{ Color = [System.Drawing.Color]::FromArgb(238, 72, 72);   Label = 'czeka na Ciebie'; Order = 1 }
+    'error'     = @{ Color = [System.Drawing.Color]::FromArgb(198, 96, 220);  Label = 'błąd';            Order = 1 }
+}
+function Get-StateInfo([string]$s) {
+    if ($s -and $script:Palette.ContainsKey($s)) { return $script:Palette[$s] }
+    return $script:Palette['idle']
+}
+
+# --------------------------------------------------------------------------- #
+#  Odczyt plików stanu                                                         #
+# --------------------------------------------------------------------------- #
+function Get-ClaudeSessions {
+    $rows = New-Object System.Collections.ArrayList
+    $files = @()
+    try {
+        $files = @(Get-ChildItem -LiteralPath $script:StatusDir -Filter '*.json' -File -ErrorAction Stop)
+    } catch { return @() }
+
+    $now = Get-Date
+    foreach ($f in $files) {
+        $d = $null
+        try { $d = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json } catch { continue }
+        if (-not $d) { continue }
+
+        $ts = $f.LastWriteTime
+        if ($d.ts) { try { $ts = [datetime]::Parse($d.ts) } catch { } }
+
+        # wpisy starsze niż dobę traktujemy jako martwe
+        if (($now - $ts).TotalHours -gt 24) {
+            Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+
+        $st = [string]$d.state
+        $info = Get-StateInfo $st
+
+        [void]$rows.Add([pscustomobject]@{
+            File    = $f.FullName
+            Session = [string]$d.session_id
+            State   = $st
+            Project = [string]$d.project
+            Cwd     = [string]$d.cwd
+            Note    = [string]$d.note
+            Ts      = $ts
+            Order   = $info.Order
+        })
+    }
+    return @($rows | Sort-Object Order, @{ Expression = 'Ts'; Descending = $true })
+}
+
+# --------------------------------------------------------------------------- #
+#  Formularz                                                                   #
+# --------------------------------------------------------------------------- #
+$RowH = 26
+$PadY = 7
+
+$form = New-Object System.Windows.Forms.Form
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$form.StartPosition   = [System.Windows.Forms.FormStartPosition]::Manual
+$form.ShowInTaskbar   = $false
+$form.TopMost         = [bool]$script:Cfg.TopMost
+$form.BackColor       = [System.Drawing.Color]::FromArgb(20, 21, 24)
+$form.Opacity         = [double]$script:Cfg.Opacity
+$form.Width           = [int]$script:Cfg.Width
+$form.Height          = 40
+$form.Text            = 'Claude Status'
+$form.Location        = New-Object System.Drawing.Point([int]$script:Cfg.X, [int]$script:Cfg.Y)
+
+# double buffering (mniej migotania)
+try {
+    $dbProp = [System.Windows.Forms.Control].GetProperty('DoubleBuffered',
+        [System.Reflection.BindingFlags]'Instance,NonPublic')
+    $dbProp.SetValue($form, $true, $null)
+} catch { }
+
+$script:FontMain  = New-Object System.Drawing.Font('Segoe UI', 9,   [System.Drawing.FontStyle]::Bold)
+$script:FontSub   = New-Object System.Drawing.Font('Segoe UI', 8,   [System.Drawing.FontStyle]::Regular)
+$script:FontSmall = New-Object System.Drawing.Font('Segoe UI', 7.5, [System.Drawing.FontStyle]::Regular)
+
+$script:Sf = New-Object System.Drawing.StringFormat
+$script:Sf.Trimming     = [System.Drawing.StringTrimming]::EllipsisCharacter
+$script:Sf.FormatFlags  = [System.Drawing.StringFormatFlags]::NoWrap
+
+$script:Rows     = @()
+$script:Prev     = @{}
+$script:BlinkOn  = $true
+$script:Dragging = $false
+$script:Moved    = $false
+$script:DragOrigin = New-Object System.Drawing.Point(0, 0)
+$script:FormOrigin = New-Object System.Drawing.Point(0, 0)
+
+function Set-RoundedRegion($f, [int]$r) {
+    try {
+        $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $d = $r * 2
+        $path.AddArc(0, 0, $d, $d, 180, 90)
+        $path.AddArc($f.Width - $d, 0, $d, $d, 270, 90)
+        $path.AddArc($f.Width - $d, $f.Height - $d, $d, $d, 0, 90)
+        $path.AddArc(0, $f.Height - $d, $d, $d, 90, 90)
+        $path.CloseFigure()
+        $f.Region = New-Object System.Drawing.Region($path)
+        $path.Dispose()
+    } catch { }
+}
+
+function Format-Elapsed([datetime]$ts) {
+    $sp = (Get-Date) - $ts
+    if ($sp.TotalSeconds -lt 60)  { return ('{0}s'  -f [int]$sp.TotalSeconds) }
+    if ($sp.TotalMinutes -lt 60)  { return ('{0}m'  -f [int]$sp.TotalMinutes) }
+    if ($sp.TotalHours -lt 24)    { return ('{0}h'  -f [int]$sp.TotalHours) }
+    return ('{0}d' -f [int]$sp.TotalDays)
+}
+
+# --------------------------------------------------------------------------- #
+#  Rysowanie                                                                   #
+# --------------------------------------------------------------------------- #
+$form.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+
+    $w = $sender.ClientSize.Width
+
+    # ramka
+    $penBorder = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(60, 62, 70)), 1
+    $g.DrawRectangle($penBorder, 0, 0, $w - 1, $sender.ClientSize.Height - 1)
+    $penBorder.Dispose()
+
+    if (-not $script:Rows -or $script:Rows.Count -eq 0) {
+        $brDot = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(70, 72, 80))
+        $g.FillEllipse($brDot, 12, 15, 10, 10)
+        $brDot.Dispose()
+        $br = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(130, 134, 144))
+        $g.DrawString('Claude — brak aktywnych sesji', $script:FontSub, $br, 30, 12)
+        $br.Dispose()
+        return
+    }
+
+    $y = $PadY
+    foreach ($r in $script:Rows) {
+        $info = Get-StateInfo $r.State
+        $col  = $info.Color
+
+        # miganie dla stanów wymagających uwagi
+        if (($r.State -eq 'attention' -or $r.State -eq 'error') -and -not $script:BlinkOn) {
+            $col = [System.Drawing.Color]::FromArgb(90, $col.R, $col.G, $col.B)
+        }
+
+        # poświata + kropka
+        $glow = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(45, $col.R, $col.G, $col.B))
+        $g.FillEllipse($glow, 8, $y + 3, 18, 18)
+        $glow.Dispose()
+
+        $dot = New-Object System.Drawing.SolidBrush $col
+        $g.FillEllipse($dot, 12, $y + 7, 10, 10)
+        $dot.Dispose()
+
+        # czas po prawej
+        $elapsed = Format-Elapsed $r.Ts
+        $sz = $g.MeasureString($elapsed, $script:FontSmall)
+        $brTime = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(120, 124, 134))
+        $g.DrawString($elapsed, $script:FontSmall, $brTime, ($w - $sz.Width - 8), ($y + 5))
+        $brTime.Dispose()
+
+        # nazwa projektu
+        $brName = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(232, 234, 240))
+        $name = $r.Project
+        $maxName = 150
+        $g.DrawString($name, $script:FontMain, $brName,
+            (New-Object System.Drawing.RectangleF 32, ($y + 3), $maxName, 18), $script:Sf)
+        $brName.Dispose()
+
+        # etykieta stanu
+        $brState = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb($col.R, $col.G, $col.B))
+        $stateW = [Math]::Max(40, ($w - 32 - $maxName - 4 - ($sz.Width + 12)))
+        $g.DrawString($info.Label, $script:FontSub, $brState,
+            (New-Object System.Drawing.RectangleF (32 + $maxName + 4), ($y + 4), $stateW, 18), $script:Sf)
+        $brState.Dispose()
+
+        $y += $RowH
+    }
+})
+
+# --------------------------------------------------------------------------- #
+#  Odświeżanie                                                                 #
+# --------------------------------------------------------------------------- #
+function Update-Overlay {
+    $script:Rows = @(Get-ClaudeSessions)
+
+    # dźwięki na zmianę stanu
+    if ($script:Cfg.Sound) {
+        foreach ($r in $script:Rows) {
+            $old = $null
+            if ($script:Prev.ContainsKey($r.Session)) { $old = $script:Prev[$r.Session] }
+            if ($old -ne $r.State) {
+                if ($r.State -eq 'attention' -or $r.State -eq 'error') {
+                    try { [System.Media.SystemSounds]::Exclamation.Play() } catch { }
+                } elseif ($r.State -eq 'done' -and $old -eq 'working') {
+                    try { [System.Media.SystemSounds]::Asterisk.Play() } catch { }
+                }
+            }
+        }
+    }
+
+    $script:Prev = @{}
+    foreach ($r in $script:Rows) { $script:Prev[$r.Session] = $r.State }
+
+    $rowCount = [Math]::Max($script:Rows.Count, 1)
+    $needH = ($rowCount * $RowH) + ($PadY * 2)
+    if ($form.Height -ne $needH) {
+        $form.Height = $needH
+        Set-RoundedRegion $form 9
+    }
+    $form.Invalidate()
+}
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 450
+$timer.Add_Tick({
+    $script:BlinkOn = -not $script:BlinkOn
+    Update-Overlay
+})
+
+# --------------------------------------------------------------------------- #
+#  Mysz: przeciąganie i klik w wiersz                                          #
+# --------------------------------------------------------------------------- #
+function Invoke-FocusEditor($row) {
+    if (-not $row -or -not $row.Cwd) { return }
+    $leaf = ''
+    try { $leaf = Split-Path -Path $row.Cwd -Leaf } catch { }
+    if (-not $leaf) { return }
+    $p = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$leaf*" } |
+        Select-Object -First 1
+    if ($p) {
+        try {
+            if ([ClaudeOverlayWin32]::IsIconic($p.MainWindowHandle)) {
+                [void][ClaudeOverlayWin32]::ShowWindow($p.MainWindowHandle, 9)
+            }
+            [void][ClaudeOverlayWin32]::SetForegroundWindow($p.MainWindowHandle)
+        } catch { }
+    }
+}
+
+$form.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        $script:Dragging   = $true
+        $script:Moved      = $false
+        $script:DragOrigin = [System.Windows.Forms.Cursor]::Position
+        $script:FormOrigin = $form.Location
+    }
+})
+
+$form.Add_MouseMove({
+    param($sender, $e)
+    if ($script:Dragging) {
+        $p  = [System.Windows.Forms.Cursor]::Position
+        $dx = $p.X - $script:DragOrigin.X
+        $dy = $p.Y - $script:DragOrigin.Y
+        if ([Math]::Abs($dx) + [Math]::Abs($dy) -gt 3) { $script:Moved = $true }
+        $form.Location = New-Object System.Drawing.Point (($script:FormOrigin.X + $dx), ($script:FormOrigin.Y + $dy))
+    }
+})
+
+$form.Add_MouseUp({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $script:Dragging = $false
+    if ($script:Moved) {
+        $script:Cfg.X = $form.Location.X
+        $script:Cfg.Y = $form.Location.Y
+        Save-OverlayConfig
+    } else {
+        $idx = [Math]::Floor(($e.Y - $PadY) / $RowH)
+        if ($idx -ge 0 -and $idx -lt $script:Rows.Count) {
+            Invoke-FocusEditor $script:Rows[$idx]
+        }
+    }
+})
+
+# --------------------------------------------------------------------------- #
+#  Menu kontekstowe                                                            #
+# --------------------------------------------------------------------------- #
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+
+$miSound = New-Object System.Windows.Forms.ToolStripMenuItem 'Dźwięki'
+$miSound.CheckOnClick = $true
+$miSound.Checked = [bool]$script:Cfg.Sound
+$miSound.Add_Click({ $script:Cfg.Sound = $miSound.Checked; Save-OverlayConfig })
+
+$miTop = New-Object System.Windows.Forms.ToolStripMenuItem 'Zawsze na wierzchu'
+$miTop.CheckOnClick = $true
+$miTop.Checked = [bool]$script:Cfg.TopMost
+$miTop.Add_Click({
+    $script:Cfg.TopMost = $miTop.Checked
+    $form.TopMost = $miTop.Checked
+    Save-OverlayConfig
+})
+
+$miClear = New-Object System.Windows.Forms.ToolStripMenuItem 'Wyczyść zakończone sesje'
+$miClear.Add_Click({
+    foreach ($r in $script:Rows) {
+        if ($r.State -eq 'done' -or $r.State -eq 'idle') {
+            Remove-Item -LiteralPath $r.File -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Update-Overlay
+})
+
+$miReset = New-Object System.Windows.Forms.ToolStripMenuItem 'Przywróć pozycję (60,60)'
+$miReset.Add_Click({
+    $form.Location = New-Object System.Drawing.Point 60, 60
+    $script:Cfg.X = 60; $script:Cfg.Y = 60
+    Save-OverlayConfig
+})
+
+$miExit = New-Object System.Windows.Forms.ToolStripMenuItem 'Zamknij nakładkę'
+$miExit.Add_Click({ $form.Close() })
+
+[void]$menu.Items.Add($miSound)
+[void]$menu.Items.Add($miTop)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($miClear)
+[void]$menu.Items.Add($miReset)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($miExit)
+
+$form.ContextMenuStrip = $menu
+
+# --------------------------------------------------------------------------- #
+#  Start                                                                       #
+# --------------------------------------------------------------------------- #
+$form.Add_Shown({
+    Set-RoundedRegion $form 9
+    Update-Overlay
+    $timer.Start()
+})
+
+$form.Add_FormClosing({
+    $timer.Stop()
+    $script:Cfg.X = $form.Location.X
+    $script:Cfg.Y = $form.Location.Y
+    Save-OverlayConfig
+})
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+[System.Windows.Forms.Application]::Run($form)

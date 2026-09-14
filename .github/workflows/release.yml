@@ -1,0 +1,69 @@
+name: release
+
+# Wydanie powstaje z tagu: `git tag v2.1.0 && git push --tags`
+# (albo jednym poleceniem: tools/Publish-Version.ps1 -Version 2.1.0).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Wersja do zbudowania, np. 2.1.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Ustal wersję
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { $tag -replace '^v', '' }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Wersja '$version' nie wygląda jak 1.2.3" }
+
+          # tag musi zgadzać się z <Version> w Directory.Build.props - inaczej
+          # repozytorium mówiłoby co innego niż wydanie
+          $props = [xml](Get-Content Directory.Build.props -Raw)
+          $inProps = ($props.Project.PropertyGroup.Version | Where-Object { $_ }) -as [string]
+          if ($inProps -ne $version) { throw "Directory.Build.props ma wersję $inProps, a tag mówi $version" }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Zainstaluj Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Zbuduj instalator i paczkę portable
+        shell: pwsh
+        run: .\Build-Release.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Opublikuj wydanie
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem publish\*.exe, publish\*.zip | ForEach-Object { $_.FullName }
+          gh release create 'v${{ steps.version.outputs.version }}' $files `
+            --title 'Claude Status Overlay ${{ steps.version.outputs.version }}' `
+            --generate-notes
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeStatusOverlay-${{ steps.version.outputs.version }}
+          path: publish/*

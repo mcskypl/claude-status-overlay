@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Wspólna logika nakładki statusu Claude Code: pliki stanu sesji, limity użycia, hooki.</Description>
+  </PropertyGroup>
+
+</Project>

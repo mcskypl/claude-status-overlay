@@ -1,0 +1,17 @@
+# Domyślnie git sam rozpoznaje tekst i normalizuje końce linii w repozytorium.
+* text=auto
+
+# Windows PowerShell wymaga CRLF przy plikach z BOM-em; Inno Setup też woli CRLF
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.iss text eol=crlf
+
+# YAML workflowów zostaje z LF
+*.yml text eol=lf
+*.yaml text eol=lf
+
+*.ico binary
+*.png binary
+*.jpg binary

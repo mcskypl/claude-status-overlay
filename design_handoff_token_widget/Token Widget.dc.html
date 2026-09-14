@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0b0e0c; }
+  a { color: #9ec7ff; } a:hover { color: #c9def9; }
+  @keyframes pulseRing { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  @keyframes blink { 0%,49% { opacity: 1 } 50%,100% { opacity: .25 } }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: radial-gradient(120% 90% at 50% -10%, #22302a 0%, #141a17 45%, #0b0e0c 100%); font-family: 'IBM Plex Sans', system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; padding-bottom: 80px;">
+
+  <div style="width: 100%; max-width: 980px; height: 560px; position: relative; overflow: hidden; border-radius: 0 0 12px 12px;">
+    <div style="position: absolute; top: 0; left: 0; right: 0; height: 30px; z-index: 1; background: rgba(255,255,255,0.04); backdrop-filter: blur(20px); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; color: rgba(255,255,255,0.5); font-size: 12px; letter-spacing: 0.02em;">
+      <span style="font-weight: 600; color: rgba(255,255,255,0.72);">optimes</span>
+      <span style="font-family: 'IBM Plex Mono', monospace;">czw 11 wrz&nbsp;&nbsp;13:42</span>
+    </div>
+
+    <div onClick="{{ toggle }}" onMouseEnter="{{ peek }}" onMouseLeave="{{ unpeek }}" style="position: absolute; z-index: 2; background: #000; color: #fff; border-radius: {{ shellRadius }}; top: {{ shellPosTop }}; bottom: {{ shellPosBottom }}; left: {{ shellPosLeft }}; right: {{ shellPosRight }}; transform: {{ shellTransform }}; box-shadow: {{ shellShadow }}; cursor: pointer; overflow: hidden; transition: width 380ms cubic-bezier(.22,1,.36,1), height 380ms cubic-bezier(.22,1,.36,1), border-radius 380ms cubic-bezier(.22,1,.36,1); width: {{ shellW }}; height: {{ shellH }};">
+
+      <div style="position: absolute; inset: 0; display: flex; align-items: stretch; gap: 18px; opacity: {{ restOpacityH }}; transition: opacity 160ms ease; pointer-events: none;">
+        <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; justify-content: flex-start;">
+          <div style="width: 35%; background: oklch(0.72 0.13 250);"></div>
+        </div>
+        <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; justify-content: flex-end;">
+          <div style="width: 72%; background: oklch(0.72 0.13 150);"></div>
+        </div>
+        <div style="position: absolute; top: 0; bottom: 0; left: 50%; width: 12px; margin-left: -6px; border-radius: 3px; background: oklch(0.78 0.13 75); animation: pulseRing 2.4s ease-in-out infinite;"></div>
+      </div>
+
+      <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: stretch; gap: 18px; opacity: {{ restOpacityV }}; transition: opacity 160ms ease; pointer-events: none;">
+        <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; flex-direction: column; justify-content: flex-start;">
+          <div style="height: 35%; background: oklch(0.72 0.13 250);"></div>
+        </div>
+        <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; flex-direction: column; justify-content: flex-end;">
+          <div style="height: 72%; background: oklch(0.72 0.13 150);"></div>
+        </div>
+        <div style="position: absolute; left: 0; right: 0; top: 50%; height: 12px; margin-top: -6px; border-radius: 3px; background: oklch(0.78 0.13 75); animation: pulseRing 2.4s ease-in-out infinite;"></div>
+      </div>
+
+      <div style="position: absolute; inset: 0; display: flex; align-items: center; gap: 9px; padding: 0 11px; opacity: {{ slimOpacityH }}; transition: opacity 200ms ease; pointer-events: none;">
+        <div style="width: 11px; height: 11px; border-radius: 50%; flex: none; background: conic-gradient(oklch(0.78 0.13 75) 0turn 0.65turn, rgba(255,255,255,0.14) 0.65turn 1turn); display: flex; align-items: center; justify-content: center; animation: pulseRing 2.4s ease-in-out infinite;">
+          <div style="width: 6px; height: 6px; border-radius: 50%; background: #000;"></div>
+        </div>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500; letter-spacing: -0.01em; color: rgba(255,255,255,0.92);">6m</span>
+        <div style="width: 1px; height: 10px; background: rgba(255,255,255,0.14);"></div>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">5h</span>
+          <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: 35%; height: 100%; background: oklch(0.72 0.13 250);"></div></div>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.72);">35%</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">7d</span>
+          <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: 72%; height: 100%; background: oklch(0.72 0.13 150);"></div></div>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.72);">72%</span>
+        </div>
+      </div>
+
+      <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 11px 0; opacity: {{ slimOpacityV }}; transition: opacity 200ms ease; pointer-events: none;">
+        <div style="width: 11px; height: 11px; border-radius: 50%; flex: none; background: conic-gradient(oklch(0.78 0.13 75) 0turn 0.65turn, rgba(255,255,255,0.14) 0.65turn 1turn); display: flex; align-items: center; justify-content: center; animation: pulseRing 2.4s ease-in-out infinite;">
+          <div style="width: 6px; height: 6px; border-radius: 50%; background: #000;"></div>
+        </div>
+        <div style="height: 1px; width: 10px; background: rgba(255,255,255,0.14);"></div>
+        <div style="width: 3px; height: 64px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 35%; background: oklch(0.72 0.13 250);"></div></div>
+        <div style="width: 3px; height: 64px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;"><div style="height: 72%; background: oklch(0.72 0.13 150);"></div></div>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.3); margin-top: auto;">4</span>
+      </div>
+
+      <div style="position: absolute; inset: 0; padding: 16px 18px 18px; display: flex; flex-direction: column; opacity: {{ panelOpacity }}; transform: scale({{ panelScale }}); transform-origin: 50% 0%; transition: opacity 220ms ease 60ms, transform 380ms cubic-bezier(.22,1,.36,1); pointer-events: none;">
+
+        <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px;">
+          <span style="font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.34);">sesje</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.34);">4 aktywne</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <sc-for list="{{ rows }}" as="row" hint-placeholder-count="4">
+            <div style="display: grid; grid-template-columns: 14px 1fr auto auto; align-items: center; gap: 10px; height: 30px; border-radius: 8px; padding: 0 6px; margin: 0 -6px;" style-hover="background: rgba(255,255,255,0.05);">
+              <div style="width: 8px; height: 8px; border-radius: 50%; justify-self: center; background: {{ row.dotFill }}; box-shadow: {{ row.dotGlow }};"></div>
+              <span style="font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ row.name }}</span>
+              <span style="font-size: 12px; color: {{ row.stateColor }};">{{ row.state }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.3); min-width: 26px; text-align: right;">{{ row.age }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="height: 1px; background: rgba(255,255,255,0.08); margin: 14px 0 12px;"></div>
+
+        <div style="display: flex; flex-direction: column; gap: 11px;">
+          <sc-for list="{{ meters }}" as="m" hint-placeholder-count="2">
+            <div style="display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px;">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.42);">{{ m.label }}</span>
+              <div style="height: 4px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden;">
+                <div style="height: 100%; border-radius: 3px; width: {{ m.width }}; background: {{ m.color }}; transition: width 600ms cubic-bezier(.22,1,.36,1);"></div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 82px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.82);">{{ m.free }}</span>
+                <span style="font-size: 9.5px; color: rgba(255,255,255,0.3); letter-spacing: 0.02em;">{{ m.reset }}</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 28px; display: flex; flex-direction: column; align-items: center; gap: 14px;">
+    <div style="display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;">
+      <sc-for list="{{ spots }}" as="spot" hint-placeholder-count="4">
+        <button onClick="{{ spot.pick }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: {{ spot.fg }}; background: {{ spot.bg }}; border: 0.5px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 8px 14px; cursor: pointer;" style-hover="color: #fff;">{{ spot.label }}</button>
+      </sc-for>
+    </div>
+    <div style="display: flex; gap: 6px;">
+      <sc-for list="{{ stages }}" as="st" hint-placeholder-count="3">
+        <button onClick="{{ st.pick }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: {{ st.fg }}; background: {{ st.bg }}; border: 0.5px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 8px 14px; cursor: pointer;">{{ st.label }}</button>
+      </sc-for>
+      <button onClick="{{ toggleDetached }}" style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: {{ detachedFg }}; background: {{ detachedBg }}; border: 0.5px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 8px 14px; cursor: pointer;">odklejona</button>
+    </div>
+    <span style="font-size: 11px; color: rgba(255,255,255,0.22);">najedź kursorem, aby podejrzeć &middot; kliknij, aby rozwinąć</span>
+  </div>
+
+  <div style="width: 100%; max-width: 980px; padding: 0 24px; box-sizing: border-box; margin-top: 64px; display: flex; flex-direction: column; gap: 40px;">
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.5);">stany sesji</span>
+        <span style="font-size: 11px; color: rgba(255,255,255,0.25);">brzeg &middot; pasek</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px;">
+        <sc-for list="{{ statuses }}" as="s" hint-placeholder-count="4">
+          <div style="background: rgba(255,255,255,0.03); border: 0.5px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 7px; height: 7px; border-radius: 50%; background: {{ s.color }}; box-shadow: {{ s.glow }};"></div>
+              <span style="font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.82);">{{ s.label }}</span>
+              <span style="font-size: 10.5px; color: rgba(255,255,255,0.32); margin-left: auto;">{{ s.note }}</span>
+            </div>
+
+            <div style="height: 5px; width: 148px; border-radius: 0 0 3px 3px; position: relative; display: flex; gap: 18px; background: #000;">
+              <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex;"><div style="width: 35%; background: oklch(0.72 0.13 250);"></div></div>
+              <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; justify-content: flex-end;"><div style="width: 72%; background: oklch(0.72 0.13 150);"></div></div>
+              <div style="position: absolute; top: 0; bottom: 0; left: 50%; width: 12px; margin-left: -6px; border-radius: 3px; background: {{ s.color }}; animation: {{ s.anim }};"></div>
+            </div>
+
+            <div style="width: 318px; height: 22px; background: #000; border-radius: 11px; display: flex; align-items: center; gap: 9px; padding: 0 11px; box-sizing: border-box; box-shadow: 0 0 0 0.5px rgba(255,255,255,0.08) inset;">
+              <div style="width: 11px; height: 11px; border-radius: 50%; flex: none; background: {{ s.ring }}; display: flex; align-items: center; justify-content: center; animation: {{ s.anim }};">
+                <div style="width: 6px; height: 6px; border-radius: 50%; background: #000;"></div>
+              </div>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500; color: {{ s.textColor }};">{{ s.value }}</span>
+              <div style="width: 1px; height: 10px; background: rgba(255,255,255,0.14);"></div>
+              <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">5h</span>
+                <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: 35%; height: 100%; background: oklch(0.72 0.13 250);"></div></div>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.72);">35%</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">7d</span>
+                <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: 72%; height: 100%; background: oklch(0.72 0.13 150);"></div></div>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.72);">72%</span>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+        <span style="font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.5);">dwa okna, dwie wartości</span>
+        <span style="font-size: 11px; color: rgba(255,255,255,0.25);">brzeg dzieli się na pół: lewa połowa to okno 5 h (rośnie od lewej), prawa to 7 dni (rośnie od prawej); środkowy znacznik to stan sesji</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px;">
+        <sc-for list="{{ combos }}" as="c" hint-placeholder-count="4">
+          <div style="background: rgba(255,255,255,0.03); border: 0.5px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px 16px 18px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+              <span style="font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.82);">{{ c.label }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: rgba(255,255,255,0.34); margin-left: auto;">{{ c.summary }}</span>
+            </div>
+
+            <div style="height: 5px; width: 148px; border-radius: 0 0 3px 3px; position: relative; display: flex; gap: 18px; background: #000;">
+              <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex;"><div style="width: {{ c.a }}; background: {{ c.aColor }};"></div></div>
+              <div style="flex: 1; background: rgba(255,255,255,0.13); display: flex; justify-content: flex-end;"><div style="width: {{ c.b }}; background: {{ c.bColor }};"></div></div>
+              <div style="position: absolute; top: 0; bottom: 0; left: 50%; width: 12px; margin-left: -6px; border-radius: 3px; background: oklch(0.78 0.13 75);"></div>
+            </div>
+
+            <div style="width: 318px; height: 22px; background: #000; border-radius: 11px; display: flex; align-items: center; gap: 9px; padding: 0 11px; box-sizing: border-box; box-shadow: 0 0 0 0.5px rgba(255,255,255,0.08) inset;">
+              <div style="width: 11px; height: 11px; border-radius: 50%; flex: none; background: conic-gradient(oklch(0.78 0.13 75) 0turn 0.65turn, rgba(255,255,255,0.14) 0.65turn 1turn); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 6px; height: 6px; border-radius: 50%; background: #000;"></div>
+              </div>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.92);">6m</span>
+              <div style="width: 1px; height: 10px; background: rgba(255,255,255,0.14);"></div>
+              <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">5h</span>
+                <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: {{ c.a }}; height: 100%; background: {{ c.aColor }};"></div></div>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: {{ c.aText }};">{{ c.a }}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: rgba(255,255,255,0.38);">7d</span>
+                <div style="width: 34px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.14); overflow: hidden;"><div style="width: {{ c.b }}; height: 100%; background: {{ c.bColor }};"></div></div>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: {{ c.bText }};">{{ c.b }}</span>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <span style="font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.5);">poziomy limitu</span>
+        <span style="font-size: 11px; color: rgba(255,255,255,0.25);">kolor oznacza okno (5 h niebieski, 7 dni zielony); czerwony pojawia się dopiero poniżej 15%</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+        <sc-for list="{{ levels }}" as="l" hint-placeholder-count="4">
+          <div style="background: rgba(255,255,255,0.03); border: 0.5px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: baseline; gap: 8px;">
+              <span style="font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.82);">{{ l.label }}</span>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: {{ l.color }}; margin-left: auto;">{{ l.free }}</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 12px;">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.42);">5 h</span>
+              <div style="height: 4px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden;"><div style="height: 100%; border-radius: 3px; width: {{ l.free }}; background: {{ l.color }};"></div></div>
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.82);">{{ l.free }}</span>
+            </div>
+            <span style="font-size: 10.5px; color: rgba(255,255,255,0.3);">{{ l.note }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;stan&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;brzeg&quot;,&quot;pasek&quot;,&quot;panel&quot;],&quot;default&quot;:&quot;brzeg&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;pozycja&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;góra&quot;,&quot;lewo&quot;,&quot;prawo&quot;,&quot;dół&quot;],&quot;default&quot;:&quot;góra&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;odklejona&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;oklch(0.72 0.13 250)&quot;,&quot;options&quot;:[&quot;oklch(0.72 0.13 250)&quot;,&quot;oklch(0.72 0.13 150)&quot;,&quot;oklch(0.78 0.13 75)&quot;,&quot;oklch(0.72 0.13 20)&quot;],&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = { stage: null, pos: null, detached: null };
+
+  renderVals() {
+    const stage = this.state.stage ?? this.props.stan ?? 'brzeg';
+    const open = stage === 'panel';
+    const slim = stage === 'pasek';
+    const rest = stage === 'brzeg';
+    const pos = this.state.pos ?? this.props.pozycja ?? 'góra';
+    const detached = this.state.detached ?? this.props.odklejona ?? false;
+    const vertical = (pos === 'lewo' || pos === 'prawo') && !open;
+    const accent = this.props.accent ?? 'oklch(0.72 0.13 250)';
+    const green = 'oklch(0.72 0.13 150)';
+    const amber = 'oklch(0.78 0.13 75)';
+    const red = 'oklch(0.64 0.19 25)';
+
+    const mk = (name, state, age, kind) => ({
+      name, state, age,
+      stateColor: kind === 'work' ? amber : kind === 'ready' ? green : 'rgba(255,255,255,0.4)',
+      dotFill: kind === 'work' ? amber : kind === 'ready' ? green : 'rgba(255,255,255,0.16)',
+      dotGlow: kind === 'idle' ? 'none' : `0 0 10px ${kind === 'work' ? amber : green}55`
+    });
+
+    const R = open ? 28 : (slim ? 11 : 3);
+    const gap = detached ? 18 : 0;
+    const auto = 'auto';
+    const centerX = { left: '50%', right: auto, transform: 'translateX(-50%)' };
+    const centerY = { top: '50%', bottom: auto, transform: 'translateY(-50%)' };
+    const places = {
+      'góra':  { top: (detached ? 44 : 0) + 'px', bottom: auto, ...centerX },
+      'dół':   { bottom: gap + 'px', top: auto, ...centerX },
+      'lewo':  { left: gap + 'px', right: auto, ...centerY },
+      'prawo': { right: gap + 'px', left: auto, ...centerY }
+    };
+    const p = places[pos];
+    const place = {
+      shellPosTop: p.top ?? auto,
+      shellPosBottom: p.bottom ?? auto,
+      shellPosLeft: p.left ?? auto,
+      shellPosRight: p.right ?? auto,
+      shellTransform: p.transform
+    };
+    const radii = {
+      'góra':  `0 0 ${R}px ${R}px`,
+      'dół':   `${R}px ${R}px 0 0`,
+      'lewo':  `0 ${R}px ${R}px 0`,
+      'prawo': `${R}px 0 0 ${R}px`
+    };
+    const radius = detached ? R + 'px' : radii[pos];
+
+    return {
+      combos: [
+        { label: 'oba z zapasem', a: '82%', b: '90%', aColor: accent, bColor: green, aText: 'rgba(255,255,255,0.72)', bText: 'rgba(255,255,255,0.72)', summary: 'nic nie wymaga uwagi' },
+        { label: 'okno 5 h na końcu', a: '12%', b: '68%', aColor: red, bColor: green, aText: red, bText: 'rgba(255,255,255,0.72)', summary: 'przerwa do 14:30' },
+        { label: 'tydzień na końcu', a: '60%', b: '8%', aColor: accent, bColor: red, aText: 'rgba(255,255,255,0.72)', bText: red, summary: 'reset czw 10:00' },
+        { label: '5 h wyczerpane', a: '0%', b: '41%', aColor: red, bColor: green, aText: red, bText: 'rgba(255,255,255,0.72)', summary: 'praca wstrzymana' }
+      ],
+      statuses: [
+        { label: 'pracuje', note: 'odpowiada', value: '6m', count: '4', color: amber,
+          ring: `conic-gradient(${amber} 0turn 0.65turn, rgba(255,255,255,0.14) 0.65turn 1turn)`,
+          glow: `0 0 10px ${amber}55`, anim: 'pulseRing 2.4s ease-in-out infinite', textColor: 'rgba(255,255,255,0.92)' },
+        { label: 'czeka na mnie', note: 'pytanie w terminalu', value: 'czeka', count: '4', color: accent,
+          ring: `conic-gradient(${accent} 0turn 1turn)`,
+          glow: `0 0 10px ${accent}66`, anim: 'blink 1s steps(1,end) infinite', textColor: accent },
+        { label: 'gotowe', note: 'zadanie zakończone', value: '2m', count: '3', color: green,
+          ring: `conic-gradient(${green} 0turn 1turn)`,
+          glow: `0 0 10px ${green}55`, anim: 'none', textColor: 'rgba(255,255,255,0.92)' },
+        { label: 'błąd', note: 'sesja przerwana', value: 'błąd', count: '2', color: red,
+          ring: `conic-gradient(${red} 0turn 1turn)`,
+          glow: `0 0 12px ${red}77`, anim: 'blink 1.6s steps(1,end) infinite', textColor: red }
+      ],
+      levels: [
+        { label: 'zapas', free: '92%', color: accent, note: 'reset 18:00' },
+        { label: 'połowa', free: '48%', color: accent, note: 'reset 14:30' },
+        { label: 'mało', free: '14%', color: red, note: 'poniżej progu 15% · ~20 min pracy' },
+        { label: 'wyczerpany', free: '0%', color: red, note: 'okno 5 h wznowi się 14:30' }
+      ],
+      rows: [
+        mk('optimes', 'pracuje', '6m', 'work'),
+        mk('claude-status-overlay', 'gotowe', '2m', 'ready'),
+        mk('optimes', 'gotowe', '37m', 'ready'),
+        mk('claude-status-overlay', 'bezczynny', '2m', 'idle')
+      ],
+      meters: [
+        { label: '5 h', width: '35%', color: accent, free: '35% wolne', reset: 'reset 14:30' },
+        { label: '7 dni', width: '72%', color: green, free: '72% wolne', reset: 'reset czw 10:00' }
+      ],
+      shellW: open ? '392px' : (vertical ? (slim ? '22px' : '5px') : (slim ? '318px' : '148px')),
+      shellH: open ? '292px' : (vertical ? (slim ? '318px' : '148px') : (slim ? '22px' : '5px')),
+      slimOpacityH: (slim && !vertical) ? 1 : 0,
+      slimOpacityV: (slim && vertical) ? 1 : 0,
+      restOpacityH: (rest && !vertical) ? 1 : 0,
+      restOpacityV: (rest && vertical) ? 1 : 0,
+      stages: ['brzeg', 'pasek', 'panel'].map(s => ({
+        label: s,
+        fg: s === stage ? '#000' : 'rgba(255,255,255,0.55)',
+        bg: s === stage ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.06)',
+        pick: () => this.setState({ stage: s })
+      })),
+      peek: () => { if (this.state.stage !== 'panel') this.setState({ stage: 'pasek' }); },
+      unpeek: () => { if (this.state.stage === 'pasek') this.setState({ stage: 'brzeg' }); },
+      shellShadow: rest ? '0 4px 14px -6px rgba(0,0,0,0.7)' : '0 18px 40px -14px rgba(0,0,0,0.85), 0 0 0 0.5px rgba(255,255,255,0.08) inset',
+      shellRadius: radius,
+      ...place,
+      spots: ['góra', 'lewo', 'prawo', 'dół'].map(p => ({
+        label: p,
+        fg: p === pos ? '#000' : 'rgba(255,255,255,0.55)',
+        bg: p === pos ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.06)',
+        pick: () => this.setState({ pos: p })
+      })),
+      detachedFg: detached ? '#000' : 'rgba(255,255,255,0.55)',
+      detachedBg: detached ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.06)',
+      toggleDetached: () => this.setState(s => ({ detached: !(s.detached ?? detached) })),
+      panelOpacity: open ? 1 : 0,
+      panelScale: open ? 1 : 0.94,
+      toggle: () => this.setState(s => ({ stage: s.stage === 'panel' ? 'brzeg' : 'panel' }))
+    };
+  }
+}
+</script>
+</body>
+</html>

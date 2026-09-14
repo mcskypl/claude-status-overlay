@@ -1,0 +1,807 @@
+﻿<#
+    ClaudeStatusOverlay.ps1
+    -----------------------
+    Minimalistyczna pastylka zawsze na wierzchu. Jedna kropka mówi, co się dzieje:
+
+      kręcący się łuk (żółty) - Claude pracuje
+      zielona kropka          - skończył, odpowiedź gotowa
+      czerwona kropka (miga)  - czeka na Ciebie (zgoda / pytanie)
+      fioletowa kropka (miga) - tura przerwana błędem
+      pusty okrąg             - brak aktywnych sesji
+
+    Obok kropki tylko czas trwania stanu, a przy kilku sesjach mały licznik.
+    Wzdłuż dolnej krawędzi pastylki biegnie cienki wskaźnik dostępnego limitu
+    5 h - pełna kreska to pełny limit, kreska topnieje razem z limitem.
+
+    Sterowanie:
+      najedź myszką  - rozwija listę sesji (projekt + stan) i limity 5 h / 7 dni
+      lewy przycisk  - przeciąganie paska / klik aktywuje okno edytora
+      prawy przycisk - menu (pozycja: rogi i krawędzie ekranu albo dowolna,
+                       limity, dźwięki, zawsze na wierzchu, wyczyść, zamknij)
+#>
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# tylko jedna instancja nakładki
+$script:Mutex = New-Object System.Threading.Mutex($false, 'Global\ClaudeStatusOverlay_v1')
+if (-not $script:Mutex.WaitOne(0, $false)) {
+    exit 0
+}
+
+if (-not ('ClaudeOverlayWin32' -as [type])) {
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class ClaudeOverlayWin32 {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+}
+'@
+}
+
+# --------------------------------------------------------------------------- #
+#  Ścieżki i konfiguracja                                                      #
+# --------------------------------------------------------------------------- #
+$script:StatusDir = Join-Path $env:USERPROFILE '.claude\status'
+$script:CfgPath   = Join-Path $env:USERPROFILE '.claude\status-overlay.config.json'
+
+if (-not (Test-Path -LiteralPath $script:StatusDir)) {
+    New-Item -ItemType Directory -Path $script:StatusDir -Force | Out-Null
+}
+
+# Anchor: 'Free' (X/Y z przeciągania) albo róg/krawędź ekranu, np. 'TopRight'
+$script:Cfg = @{ X = 60; Y = 60; Opacity = 0.93; Sound = $true; Width = 260; TopMost = $true; Hover = $true; Anchor = 'Free'; Usage = $true }
+if (Test-Path -LiteralPath $script:CfgPath) {
+    try {
+        $loaded = Get-Content -LiteralPath $script:CfgPath -Raw | ConvertFrom-Json
+        foreach ($k in @('X', 'Y', 'Opacity', 'Sound', 'Width', 'TopMost', 'Hover', 'Anchor', 'Usage')) {
+            if ($null -ne $loaded.$k) { $script:Cfg[$k] = $loaded.$k }
+        }
+    } catch { }
+}
+# szerokość dotyczy tylko rozwiniętej listy
+if ([int]$script:Cfg.Width -lt 200) { $script:Cfg.Width = 200 }
+
+function Save-OverlayConfig {
+    try {
+        ($script:Cfg | ConvertTo-Json -Depth 3) |
+            Set-Content -LiteralPath $script:CfgPath -Encoding UTF8 -Force
+    } catch { }
+}
+
+# --------------------------------------------------------------------------- #
+#  Paleta stanów                                                               #
+# --------------------------------------------------------------------------- #
+$script:Palette = @{
+    'idle'      = @{ Color = [System.Drawing.Color]::FromArgb(120, 125, 135); Label = 'bezczynny';       Order = 4; Glyph = 'ring'  }
+    'working'   = @{ Color = [System.Drawing.Color]::FromArgb(240, 176, 40);  Label = 'pracuje';         Order = 2; Glyph = 'spin'  }
+    'done'      = @{ Color = [System.Drawing.Color]::FromArgb(64, 200, 112);  Label = 'gotowe';          Order = 3; Glyph = 'dot'   }
+    'attention' = @{ Color = [System.Drawing.Color]::FromArgb(238, 72, 72);   Label = 'czeka na Ciebie'; Order = 1; Glyph = 'blink' }
+    'error'     = @{ Color = [System.Drawing.Color]::FromArgb(198, 96, 220);  Label = 'błąd';            Order = 1; Glyph = 'blink' }
+}
+function Get-StateInfo([string]$s) {
+    if ($s -and $script:Palette.ContainsKey($s)) { return $script:Palette[$s] }
+    return $script:Palette['idle']
+}
+
+# --------------------------------------------------------------------------- #
+#  Czy zapisany stan jest jeszcze prawdziwy?                                   #
+# --------------------------------------------------------------------------- #
+# Claude Code nie ma zdarzenia "zgoda udzielona" - po kliknięciu Allow stan
+# "czeka na Ciebie" wisiałby do końca tury. Wspólna biblioteka (ta sama dla
+# serwera) szuka dowodów, że tura leci: rosnący transkrypt albo działający
+# proces narzędzia odpalony po alercie.
+$script:StateLib = Join-Path $PSScriptRoot 'ClaudeStatusState.ps1'
+if (Test-Path -LiteralPath $script:StateLib) {
+    . $script:StateLib
+} else {
+    function Resolve-LiveState([string]$state, [string]$session, [string]$hinted, [datetime]$ts) { return $state }
+}
+
+# --------------------------------------------------------------------------- #
+#  Limity użycia (5 h / 7 dni)                                                 #
+# --------------------------------------------------------------------------- #
+# Dane bierzemy z ~/.claude.json (cachedUsageUtilization) - Claude Code sam je
+# tam odświeża, więc nakładka nic nie wysyła i nie zna żadnych tokenów.
+$script:UsageLib = Join-Path $PSScriptRoot 'ClaudeStatusUsage.ps1'
+if (Test-Path -LiteralPath $script:UsageLib) {
+    . $script:UsageLib
+} else {
+    function Get-ClaudeUsage {
+        return [pscustomobject]@{ Ok = $false; Stale = $false; FetchedAt = $null; Five = $null; Seven = $null }
+    }
+}
+
+# Widok limitów odświeżamy razem z danymi sesji (~0,5 s), a nie przy każdej
+# klatce animacji - rysowanie ma tylko sięgnąć po gotową wartość.
+# $null = limity wyłączone w menu albo nie ma z czego ich policzyć.
+$script:UsageView = $null
+
+function Update-UsageView {
+    if (-not [bool]$script:Cfg.Usage) { $script:UsageView = $null; return }
+    $u = Get-ClaudeUsage
+    if ($u -and $u.Ok) { $script:UsageView = $u } else { $script:UsageView = $null }
+}
+
+function Get-UsageView { return $script:UsageView }
+
+# --------------------------------------------------------------------------- #
+#  Odczyt plików stanu                                                         #
+# --------------------------------------------------------------------------- #
+function Get-ClaudeSessions {
+    $rows = New-Object System.Collections.ArrayList
+    $files = @()
+    try {
+        $files = @(Get-ChildItem -LiteralPath $script:StatusDir -Filter '*.json' -File -ErrorAction Stop)
+    } catch { return @() }
+
+    $now = Get-Date
+    foreach ($f in $files) {
+        $d = $null
+        try { $d = Get-Content -LiteralPath $f.FullName -Raw -ErrorAction Stop | ConvertFrom-Json } catch { continue }
+        if (-not $d) { continue }
+
+        $ts = $f.LastWriteTime
+        if ($d.ts) { try { $ts = [datetime]::Parse($d.ts) } catch { } }
+
+        # wpisy starsze niż dobę traktujemy jako martwe
+        if (($now - $ts).TotalHours -gt 24) {
+            Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+
+        $st = Resolve-LiveState ([string]$d.state) ([string]$d.session_id) ([string]$d.transcript) $ts
+        $info = Get-StateInfo $st
+
+        [void]$rows.Add([pscustomobject]@{
+            File    = $f.FullName
+            Session = [string]$d.session_id
+            State   = $st
+            Project = [string]$d.project
+            Cwd     = [string]$d.cwd
+            Note    = [string]$d.note
+            Ts      = $ts
+            Order   = $info.Order
+        })
+    }
+    return @($rows | Sort-Object Order, @{ Expression = 'Ts'; Descending = $true })
+}
+
+# --------------------------------------------------------------------------- #
+#  Formularz                                                                   #
+# --------------------------------------------------------------------------- #
+$PillH = 28      # wysokość pastylki
+$DotR  = 6       # promień kropki / łuku
+$DotCx = 15      # środek kropki w poziomie
+$RowH  = 22      # wysokość wiersza rozwiniętej listy
+$PadY  = 7
+
+$GaugeH     = 3  # grubość wskaźnika limitu na dole pastylki
+$GaugeInset = 6  # odstęp wskaźnika od zaokrąglonych boków
+$UsageRowH  = 18 # wysokość wiersza limitu w widoku rozwiniętym
+
+$form = New-Object System.Windows.Forms.Form
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$form.StartPosition   = [System.Windows.Forms.FormStartPosition]::Manual
+$form.ShowInTaskbar   = $false
+$form.TopMost         = [bool]$script:Cfg.TopMost
+$form.BackColor       = [System.Drawing.Color]::FromArgb(20, 21, 24)
+$form.Opacity         = [double]$script:Cfg.Opacity
+$form.Width           = 34
+$form.Height          = $PillH
+$form.Text            = 'Claude Status'
+$form.Location        = New-Object System.Drawing.Point([int]$script:Cfg.X, [int]$script:Cfg.Y)
+
+# double buffering (mniej migotania)
+try {
+    $dbProp = [System.Windows.Forms.Control].GetProperty('DoubleBuffered',
+        [System.Reflection.BindingFlags]'Instance,NonPublic')
+    $dbProp.SetValue($form, $true, $null)
+} catch { }
+
+$script:FontMain  = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Bold)
+$script:FontSub   = New-Object System.Drawing.Font('Segoe UI', 8,   [System.Drawing.FontStyle]::Regular)
+$script:FontSmall = New-Object System.Drawing.Font('Segoe UI', 7.5, [System.Drawing.FontStyle]::Regular)
+
+$script:Sf = New-Object System.Drawing.StringFormat
+$script:Sf.Trimming    = [System.Drawing.StringTrimming]::EllipsisCharacter
+$script:Sf.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+
+$script:Rows       = @()
+$script:Prev       = @{}
+$script:Tick       = 0
+$script:Expanded   = $false
+$script:Dragging   = $false
+$script:Moved      = $false
+$script:PillWidth  = 34
+$script:DragOrigin = New-Object System.Drawing.Point(0, 0)
+$script:FormOrigin = New-Object System.Drawing.Point(0, 0)
+
+function Set-RoundedRegion($f, [int]$r) {
+    try {
+        $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $d = [Math]::Max(2, $r * 2)
+        $path.AddArc(0, 0, $d, $d, 180, 90)
+        $path.AddArc($f.Width - $d, 0, $d, $d, 270, 90)
+        $path.AddArc($f.Width - $d, $f.Height - $d, $d, $d, 0, 90)
+        $path.AddArc(0, $f.Height - $d, $d, $d, 90, 90)
+        $path.CloseFigure()
+        $f.Region = New-Object System.Drawing.Region($path)
+        $path.Dispose()
+    } catch { }
+}
+
+function Format-Elapsed([datetime]$ts) {
+    $sp = (Get-Date) - $ts
+    if ($sp.TotalSeconds -lt 60)  { return ('{0}s' -f [int]$sp.TotalSeconds) }
+    if ($sp.TotalMinutes -lt 60)  { return ('{0}m' -f [int]$sp.TotalMinutes) }
+    if ($sp.TotalHours -lt 24)    { return ('{0}h' -f [int]$sp.TotalHours) }
+    return ('{0}d' -f [int]$sp.TotalDays)
+}
+
+# stan zbiorczy: najważniejsza sesja + ile sesji jest w tej samej grupie
+function Get-Summary {
+    if (-not $script:Rows -or $script:Rows.Count -eq 0) {
+        return [pscustomobject]@{ State = ''; Info = $script:Palette['idle']; Text = ''; Count = 0; Row = $null }
+    }
+    $top   = $script:Rows[0]
+    $info  = Get-StateInfo $top.State
+    $count = @($script:Rows | Where-Object { $_.Order -eq $top.Order }).Count
+    $text  = Format-Elapsed $top.Ts
+    if ($top.State -eq 'idle') { $text = '' }
+    return [pscustomobject]@{ State = $top.State; Info = $info; Text = $text; Count = $count; Row = $top }
+}
+
+# --------------------------------------------------------------------------- #
+#  Rysowanie                                                                   #
+# --------------------------------------------------------------------------- #
+function Draw-Glyph($g, [int]$cx, [int]$cy, $info, [bool]$dim) {
+    $col = $info.Color
+    if ($dim) { $col = [System.Drawing.Color]::FromArgb(70, $col.R, $col.G, $col.B) }
+    $d = $DotR * 2
+
+    switch ($info.Glyph) {
+        'spin' {
+            $penTrack = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::FromArgb(55, $col.R, $col.G, $col.B)), 2.4
+            $g.DrawEllipse($penTrack, ($cx - $DotR), ($cy - $DotR), $d, $d)
+            $penTrack.Dispose()
+
+            $penArc = New-Object System.Drawing.Pen -ArgumentList $col, 2.4
+            $penArc.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+            $penArc.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
+            $angle = ($script:Tick * 22) % 360
+            $g.DrawArc($penArc, ($cx - $DotR), ($cy - $DotR), $d, $d, $angle, 110)
+            $penArc.Dispose()
+        }
+        'ring' {
+            $pen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::FromArgb(150, $col.R, $col.G, $col.B)), 1.6
+            $g.DrawEllipse($pen, ($cx - $DotR + 1), ($cy - $DotR + 1), ($d - 2), ($d - 2))
+            $pen.Dispose()
+        }
+        default {
+            $glow = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(45, $col.R, $col.G, $col.B))
+            $g.FillEllipse($glow, ($cx - $DotR - 3), ($cy - $DotR - 3), ($d + 6), ($d + 6))
+            $glow.Dispose()
+
+            $br = New-Object System.Drawing.SolidBrush -ArgumentList $col
+            $g.FillEllipse($br, ($cx - $DotR + 1), ($cy - $DotR + 1), ($d - 2), ($d - 2))
+            $br.Dispose()
+        }
+    }
+}
+
+# wskaźnik limitu pokazuje to, co ZOSTAŁO: pełna kreska = pełny limit.
+# Kolory ostrzegawcze dopiero pod koniec, żeby nie mieszać ich ze stanami sesji.
+function Get-GaugeColor([double]$free) {
+    if ($free -lt 8)  { return [System.Drawing.Color]::FromArgb(238, 72, 72) }
+    if ($free -lt 20) { return [System.Drawing.Color]::FromArgb(240, 176, 40) }
+    return [System.Drawing.Color]::FromArgb(92, 162, 238)
+}
+
+function Draw-Gauge($g, [single]$x, [single]$y, [single]$w, [single]$hh, [double]$free, [bool]$dim) {
+    if ($w -lt 8) { return }
+
+    $brTrack = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(48, 255, 255, 255))
+    $g.FillRectangle($brTrack, $x, $y, $w, $hh)
+    $brTrack.Dispose()
+
+    if ($free -le 0) { return }
+    $fw = [single]($w * ($free / 100.0))
+    if ($fw -lt 2) { $fw = 2 }
+
+    $c = Get-GaugeColor $free
+    if ($dim) { $c = [System.Drawing.Color]::FromArgb(110, $c.R, $c.G, $c.B) }
+    $brFill = New-Object System.Drawing.SolidBrush -ArgumentList $c
+    $g.FillRectangle($brFill, $x, $y, $fw, $hh)
+    $brFill.Dispose()
+}
+
+$script:DayShort = @('ndz', 'pon', 'wt', 'śr', 'czw', 'pt', 'sob')
+function Format-ResetTime([datetime]$t) {
+    $today = (Get-Date).Date
+    if ($t.Date -eq $today)             { return $t.ToString('HH:mm') }
+    if ($t.Date -eq $today.AddDays(1))  { return 'jutro ' + $t.ToString('HH:mm') }
+    return $script:DayShort[[int]$t.DayOfWeek] + ' ' + $t.ToString('HH:mm')
+}
+
+function Format-UsageFree($win) { return ('{0}% wolne' -f [int][Math]::Round($win.Free)) }
+function Format-UsageReset($win) {
+    if (-not $win.Resets) { return '' }
+    return ('reset ' + (Format-ResetTime $win.Resets))
+}
+
+# wiersz limitu: etykieta, pasek, procent dostępny, termin zerowania.
+# $rw i $pw to wspólne szerokości dwóch prawych kolumn - dzięki nim oba
+# wiersze kończą paski i procenty w tej samej linii.
+function Draw-UsageRow($g, [int]$w, [int]$y, [string]$label, $win, [bool]$dim, [int]$rw, [int]$pw) {
+    if (-not $win) { return }
+
+    $brDim  = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(124, 128, 138))
+    $brText = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(214, 218, 228))
+
+    $g.DrawString($label, $script:FontSmall, $brDim, 10, ($y + 2))
+
+    $rtxt = Format-UsageReset $win
+    if ($rtxt) {
+        $tw = [int]$g.MeasureString($rtxt, $script:FontSmall).Width
+        $g.DrawString($rtxt, $script:FontSmall, $brDim, ($w - 10 - $tw), ($y + 2))
+    }
+
+    $ptxt = Format-UsageFree $win
+    $tw = [int]$g.MeasureString($ptxt, $script:FontSmall).Width
+    $px = $w - 10 - $rw - $tw
+    $g.DrawString($ptxt, $script:FontSmall, $brText, $px, ($y + 2))
+
+    $bx = 42
+    $bw = $w - 10 - $rw - $pw - 8 - $bx
+    if ($bw -ge 24) { Draw-Gauge $g $bx ($y + 7) $bw 4 $win.Free $dim }
+
+    $brDim.Dispose()
+    $brText.Dispose()
+}
+
+# blok limitów pod listą sesji: cienka kreska i po jednym wierszu na okno
+function Draw-UsageBlock($g, [int]$w, [int]$y) {
+    $u = Get-UsageView
+    if (-not $u) { return }
+
+    $penSep = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::FromArgb(38, 255, 255, 255)), 1
+    $g.DrawLine($penSep, 10, ($y + 3), ($w - 10), ($y + 3))
+    $penSep.Dispose()
+
+    # najszersze teksty z obu wierszy wyznaczają wspólne kolumny
+    $rw = 0
+    $pw = 0
+    foreach ($win in @($u.Five, $u.Seven)) {
+        if (-not $win) { continue }
+        $rtxt = Format-UsageReset $win
+        if ($rtxt) { $rw = [Math]::Max($rw, [int]$g.MeasureString($rtxt, $script:FontSmall).Width) }
+        $pw = [Math]::Max($pw, [int]$g.MeasureString((Format-UsageFree $win), $script:FontSmall).Width)
+    }
+    if ($rw -gt 0) { $rw += 10 }
+
+    $uy = $y + 7
+    if ($u.Five)  { Draw-UsageRow $g $w $uy '5 h'   $u.Five  $u.Stale $rw $pw; $uy += $UsageRowH }
+    if ($u.Seven) { Draw-UsageRow $g $w $uy '7 dni' $u.Seven $u.Stale $rw $pw }
+}
+
+# wysokość bloku limitów w rozwiniętej liście (0 = nie rysujemy go wcale)
+function Get-UsageBlockHeight {
+    $u = Get-UsageView
+    if (-not $u) { return 0 }
+    $n = 0
+    if ($u.Five)  { $n++ }
+    if ($u.Seven) { $n++ }
+    if ($n -eq 0) { return 0 }
+    return 7 + ($n * $UsageRowH)
+}
+
+$form.Add_Paint({
+    param($sender, $e)
+    $g = $e.Graphics
+    $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
+
+    $w = $sender.ClientSize.Width
+    $h = $sender.ClientSize.Height
+    $s = Get-Summary
+
+    # miganie stanów wymagających uwagi (~420 ms)
+    $blinkOff = ($s.Info.Glyph -eq 'blink') -and (([int]($script:Tick / 7)) % 2 -eq 1)
+
+    if (-not $script:Expanded) {
+        $u = Get-UsageView
+        $gauge = ($null -ne $u) -and ($null -ne $u.Five)
+
+        # gdy dołem biegnie wskaźnik limitu, treść pastylki siedzi nad nim
+        $gy = $h - $GaugeH - 3
+        $cy = [int]($h / 2)
+        if ($gauge) { $cy = [int]($gy / 2) }
+
+        Draw-Glyph $g $DotCx $cy $s.Info $blinkOff
+
+        if ($s.Text) {
+            $br = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(150, 154, 164))
+            $g.DrawString($s.Text, $script:FontSmall, $br, ($DotCx + $DotR + 3), ($cy - 7))
+            $br.Dispose()
+        }
+        if ($s.Count -gt 1) {
+            $c = $s.Info.Color
+            $br = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(210, $c.R, $c.G, $c.B))
+            $g.DrawString(('x' + $s.Count), $script:FontSmall, $br, ($w - 20), ($cy - 7))
+            $br.Dispose()
+        }
+        if ($gauge) {
+            Draw-Gauge $g $GaugeInset $gy ($w - 2 * $GaugeInset) $GaugeH $u.Five.Free $u.Stale
+        }
+        return
+    }
+
+    # ---- widok rozwinięty (po najechaniu myszką) ----
+    $penBorder = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::FromArgb(60, 62, 70)), 1
+    $g.DrawRectangle($penBorder, 0, 0, ($w - 1), ($h - 1))
+    $penBorder.Dispose()
+
+    if (-not $script:Rows -or $script:Rows.Count -eq 0) {
+        Draw-Glyph $g $DotCx ($PadY + [int]($RowH / 2)) $script:Palette['idle'] $false
+        $br = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(130, 134, 144))
+        $g.DrawString('brak aktywnych sesji', $script:FontSub, $br, 28, ($PadY + 3))
+        $br.Dispose()
+        Draw-UsageBlock $g $w ($PadY + $RowH)
+        return
+    }
+
+    $y = $PadY
+    foreach ($r in $script:Rows) {
+        $info = Get-StateInfo $r.State
+        $off  = ($info.Glyph -eq 'blink') -and (([int]($script:Tick / 7)) % 2 -eq 1)
+        Draw-Glyph $g $DotCx ($y + [int]($RowH / 2)) $info $off
+
+        # czas po prawej, etykieta stanu obok niego, nazwa projektu zajmuje resztę
+        $elapsed = Format-Elapsed $r.Ts
+        $tw = [int]$g.MeasureString($elapsed, $script:FontSmall).Width + 8
+        $brTime = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(120, 124, 134))
+        $g.DrawString($elapsed, $script:FontSmall, $brTime, ($w - $tw), ($y + 4))
+        $brTime.Dispose()
+
+        $stateW = [int]$g.MeasureString($info.Label, $script:FontSub).Width + 4
+        $stateX = $w - $tw - $stateW
+        $brState = New-Object System.Drawing.SolidBrush -ArgumentList $info.Color
+        $g.DrawString($info.Label, $script:FontSub, $brState,
+            (New-Object System.Drawing.RectangleF -ArgumentList $stateX, ($y + 4), $stateW, 17), $script:Sf)
+        $brState.Dispose()
+
+        $nameW = [Math]::Max(40, ($stateX - 28 - 8))
+        $brName = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(232, 234, 240))
+        $g.DrawString($r.Project, $script:FontMain, $brName,
+            (New-Object System.Drawing.RectangleF -ArgumentList 28, ($y + 3), $nameW, 17), $script:Sf)
+        $brName.Dispose()
+
+        $y += $RowH
+    }
+
+    Draw-UsageBlock $g $w $y
+})
+
+# --------------------------------------------------------------------------- #
+#  Układ: pastylka <-> lista                                                   #
+# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+#  Kotwica: róg / krawędź ekranu albo pozycja dowolna                          #
+# --------------------------------------------------------------------------- #
+# Przy kotwicy pozycja jest liczona z rozmiaru okna, więc pastylka zakotwiczona
+# po prawej rozwija listę w lewo, a zakotwiczona na dole - w górę. Pracujemy na
+# obszarze roboczym ekranu, na którym pastylka aktualnie jest (bez paska zadań).
+$script:Anchors = [ordered]@{
+    'TopLeft'      = 'Lewy górny róg'
+    'TopCenter'    = 'Góra, na środku'
+    'TopRight'     = 'Prawy górny róg'
+    'MiddleLeft'   = 'Lewa krawędź, na środku'
+    'MiddleRight'  = 'Prawa krawędź, na środku'
+    'BottomLeft'   = 'Lewy dolny róg'
+    'BottomCenter' = 'Dół, na środku'
+    'BottomRight'  = 'Prawy dolny róg'
+}
+$AnchorMargin = 8
+
+function Get-Anchor {
+    $a = [string]$script:Cfg.Anchor
+    if ($a -and $script:Anchors.Contains($a)) { return $a }
+    return 'Free'
+}
+
+function Apply-Anchor {
+    $a = Get-Anchor
+    if ($a -eq 'Free') { return }
+
+    $wa = [System.Windows.Forms.Screen]::FromPoint($form.Location).WorkingArea
+    $w  = $form.Width
+    $h  = $form.Height
+
+    $x = $wa.Left + $AnchorMargin
+    if ($a -like '*Center') { $x = $wa.Left + [int](($wa.Width - $w) / 2) }
+    if ($a -like '*Right')  { $x = $wa.Right - $AnchorMargin - $w }
+
+    $y = $wa.Top + $AnchorMargin
+    if ($a -like 'Middle*') { $y = $wa.Top + [int](($wa.Height - $h) / 2) }
+    if ($a -like 'Bottom*') { $y = $wa.Bottom - $AnchorMargin - $h }
+
+    if ($form.Location.X -ne $x -or $form.Location.Y -ne $y) {
+        $form.Location = New-Object System.Drawing.Point $x, $y
+    }
+}
+
+function Update-Layout {
+    $s = Get-Summary
+
+    # szerokość pastylki szacowana z długości tekstu (bez pomiaru w Graphics)
+    $w = $DotCx + $DotR + 8
+    if ($s.Text)        { $w += [int]($s.Text.Length * 7) + 4 }
+    if ($s.Count -gt 1) { $w += 22 }
+    # ze wskaźnikiem limitu pastylka nie może być krótsza, niż potrzeba na pasek
+    $minW = 34
+    if (Get-UsageView) { $minW = 46 }
+    $script:PillWidth = [Math]::Max($minW, $w)
+
+    if ($script:Expanded) {
+        $rowCount = [Math]::Max($script:Rows.Count, 1)
+        $needW = [int]$script:Cfg.Width
+        $needH = ($rowCount * $RowH) + ($PadY * 2) + (Get-UsageBlockHeight)
+        if ($form.Width -ne $needW -or $form.Height -ne $needH) {
+            $form.Width  = $needW
+            $form.Height = $needH
+            Set-RoundedRegion $form 10
+        }
+    } else {
+        if ($form.Width -ne $script:PillWidth -or $form.Height -ne $PillH) {
+            $form.Width  = $script:PillWidth
+            $form.Height = $PillH
+            Set-RoundedRegion $form ([int]($PillH / 2))
+        }
+    }
+
+    # w trakcie przeciągania kotwica nie może odciągać okna spod kursora
+    if (-not $script:Dragging) { Apply-Anchor }
+}
+
+function Update-Data {
+    $script:Rows = @(Get-ClaudeSessions)
+    Update-UsageView
+
+    # dźwięki na zmianę stanu
+    if ($script:Cfg.Sound) {
+        foreach ($r in $script:Rows) {
+            $old = $null
+            if ($script:Prev.ContainsKey($r.Session)) { $old = $script:Prev[$r.Session] }
+            if ($old -ne $r.State) {
+                if ($r.State -eq 'attention' -or $r.State -eq 'error') {
+                    try { [System.Media.SystemSounds]::Exclamation.Play() } catch { }
+                } elseif ($r.State -eq 'done' -and $old -eq 'working') {
+                    try { [System.Media.SystemSounds]::Asterisk.Play() } catch { }
+                }
+            }
+        }
+    }
+
+    $script:Prev = @{}
+    foreach ($r in $script:Rows) { $script:Prev[$r.Session] = $r.State }
+}
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 60
+$timer.Add_Tick({
+    $script:Tick++
+
+    # dane z dysku co ~480 ms, animacja co klatkę
+    if (($script:Tick % 8) -eq 0) { Update-Data }
+
+    # rozwijanie/zwijanie po pozycji kursora (bez migotania na Enter/Leave)
+    if ([bool]$script:Cfg.Hover -and -not $script:Dragging) {
+        $inside = $form.Bounds.Contains([System.Windows.Forms.Cursor]::Position)
+        if ($inside -ne $script:Expanded) { $script:Expanded = $inside }
+    }
+
+    Update-Layout
+    $form.Invalidate()
+})
+
+# --------------------------------------------------------------------------- #
+#  Mysz: przeciąganie i klik w wiersz                                          #
+# --------------------------------------------------------------------------- #
+function Invoke-FocusEditor($row) {
+    if (-not $row -or -not $row.Cwd) { return }
+    $leaf = ''
+    try { $leaf = Split-Path -Path $row.Cwd -Leaf } catch { }
+    if (-not $leaf) { return }
+    $p = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like "*$leaf*" } |
+        Select-Object -First 1
+    if ($p) {
+        try {
+            if ([ClaudeOverlayWin32]::IsIconic($p.MainWindowHandle)) {
+                [void][ClaudeOverlayWin32]::ShowWindow($p.MainWindowHandle, 9)
+            }
+            [void][ClaudeOverlayWin32]::SetForegroundWindow($p.MainWindowHandle)
+        } catch { }
+    }
+}
+
+$form.Add_MouseDown({
+    param($sender, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        $script:Dragging   = $true
+        $script:Moved      = $false
+        $script:DragOrigin = [System.Windows.Forms.Cursor]::Position
+        $script:FormOrigin = $form.Location
+    }
+})
+
+$form.Add_MouseMove({
+    param($sender, $e)
+    if ($script:Dragging) {
+        $p  = [System.Windows.Forms.Cursor]::Position
+        $dx = $p.X - $script:DragOrigin.X
+        $dy = $p.Y - $script:DragOrigin.Y
+        if ([Math]::Abs($dx) + [Math]::Abs($dy) -gt 3) { $script:Moved = $true }
+        $form.Location = New-Object System.Drawing.Point (($script:FormOrigin.X + $dx), ($script:FormOrigin.Y + $dy))
+    }
+})
+
+$form.Add_MouseUp({
+    param($sender, $e)
+    if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $script:Dragging = $false
+    if ($script:Moved) {
+        # przeciągnięcie = pozycja dowolna; kotwica przestaje obowiązywać
+        $script:Cfg.Anchor = 'Free'
+        $script:Cfg.X = $form.Location.X
+        $script:Cfg.Y = $form.Location.Y
+        Update-AnchorMenu
+        Save-OverlayConfig
+        return
+    }
+
+    if ($script:Expanded) {
+        $idx = [Math]::Floor(($e.Y - $PadY) / $RowH)
+        if ($idx -ge 0 -and $idx -lt $script:Rows.Count) {
+            Invoke-FocusEditor $script:Rows[$idx]
+        }
+    } elseif ($script:Rows.Count -gt 0) {
+        Invoke-FocusEditor $script:Rows[0]
+    }
+})
+
+# --------------------------------------------------------------------------- #
+#  Menu kontekstowe                                                            #
+# --------------------------------------------------------------------------- #
+$menu = New-Object System.Windows.Forms.ContextMenuStrip
+
+$miSound = New-Object System.Windows.Forms.ToolStripMenuItem 'Dźwięki'
+$miSound.CheckOnClick = $true
+$miSound.Checked = [bool]$script:Cfg.Sound
+$miSound.Add_Click({ $script:Cfg.Sound = $miSound.Checked; Save-OverlayConfig })
+
+$miHover = New-Object System.Windows.Forms.ToolStripMenuItem 'Rozwijaj po najechaniu'
+$miHover.CheckOnClick = $true
+$miHover.Checked = [bool]$script:Cfg.Hover
+$miHover.Add_Click({
+    $script:Cfg.Hover = $miHover.Checked
+    if (-not $miHover.Checked) { $script:Expanded = $false }
+    Save-OverlayConfig
+})
+
+$miUsage = New-Object System.Windows.Forms.ToolStripMenuItem 'Limity 5 h / 7 dni'
+$miUsage.CheckOnClick = $true
+$miUsage.Checked = [bool]$script:Cfg.Usage
+$miUsage.Add_Click({
+    $script:Cfg.Usage = $miUsage.Checked
+    Update-UsageView
+    Update-Layout
+    $form.Invalidate()
+    Save-OverlayConfig
+})
+
+$miTop = New-Object System.Windows.Forms.ToolStripMenuItem 'Zawsze na wierzchu'
+$miTop.CheckOnClick = $true
+$miTop.Checked = [bool]$script:Cfg.TopMost
+$miTop.Add_Click({
+    $script:Cfg.TopMost = $miTop.Checked
+    $form.TopMost = $miTop.Checked
+    Save-OverlayConfig
+})
+
+$miClear = New-Object System.Windows.Forms.ToolStripMenuItem 'Wyczyść zakończone sesje'
+$miClear.Add_Click({
+    foreach ($r in $script:Rows) {
+        if ($r.State -eq 'done' -or $r.State -eq 'idle') {
+            Remove-Item -LiteralPath $r.File -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Update-Data
+    Update-Layout
+    $form.Invalidate()
+})
+
+# Pozycja: rogi i środki krawędzi jako "radio", plus pozycja dowolna
+$miPos = New-Object System.Windows.Forms.ToolStripMenuItem 'Pozycja'
+$script:AnchorItems = @{}
+
+function Set-Anchor([string]$a) {
+    $script:Cfg.Anchor = $a
+    if ($a -eq 'Free') {
+        $script:Cfg.X = $form.Location.X
+        $script:Cfg.Y = $form.Location.Y
+    } else {
+        Apply-Anchor
+    }
+    Update-AnchorMenu
+    Save-OverlayConfig
+}
+
+function Update-AnchorMenu {
+    $cur = Get-Anchor
+    foreach ($k in @($script:AnchorItems.Keys)) { $script:AnchorItems[$k].Checked = ($k -eq $cur) }
+}
+
+foreach ($k in $script:Anchors.Keys) {
+    $mi = New-Object System.Windows.Forms.ToolStripMenuItem $script:Anchors[$k]
+    $mi.Tag = $k
+    $mi.Add_Click({ param($s, $e) Set-Anchor ([string]$s.Tag) })
+    [void]$miPos.DropDownItems.Add($mi)
+    $script:AnchorItems[$k] = $mi
+    # separator po każdym rzędzie (góra / środek / dół)
+    if ($k -eq 'TopRight' -or $k -eq 'MiddleRight') {
+        [void]$miPos.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    }
+}
+[void]$miPos.DropDownItems.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+$miFree = New-Object System.Windows.Forms.ToolStripMenuItem 'Dowolna (przeciągnij pastylkę)'
+$miFree.Tag = 'Free'
+$miFree.Add_Click({ Set-Anchor 'Free' })
+[void]$miPos.DropDownItems.Add($miFree)
+$script:AnchorItems['Free'] = $miFree
+Update-AnchorMenu
+
+$miExit = New-Object System.Windows.Forms.ToolStripMenuItem 'Zamknij nakładkę'
+$miExit.Add_Click({ $form.Close() })
+
+[void]$menu.Items.Add($miPos)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($miSound)
+[void]$menu.Items.Add($miHover)
+[void]$menu.Items.Add($miUsage)
+[void]$menu.Items.Add($miTop)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($miClear)
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+[void]$menu.Items.Add($miExit)
+
+$form.ContextMenuStrip = $menu
+
+# --------------------------------------------------------------------------- #
+#  Start                                                                       #
+# --------------------------------------------------------------------------- #
+$form.Add_Shown({
+    Update-Data
+    Update-Layout
+    Set-RoundedRegion $form ([int]($PillH / 2))
+    $timer.Start()
+})
+
+$form.Add_FormClosing({
+    $timer.Stop()
+    $script:Cfg.X = $form.Location.X
+    $script:Cfg.Y = $form.Location.Y
+    Save-OverlayConfig
+})
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+# zakotwiczona pastylka ma się pojawić od razu w swoim rogu, bez skoku z X/Y
+Apply-Anchor
+[System.Windows.Forms.Application]::Run($form)
