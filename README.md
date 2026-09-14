@@ -1,286 +1,128 @@
-# Claude Status Overlay (C# / .NET 10)
+<div align="center">
 
-Czarna, zawsze widoczna linia przyklejona do krawędzi ekranu, która na trzy
-sposoby mówi, co robi Claude Code:
+<img src="docs/img/ikona.png" width="88" alt="">
 
-| Poziom | Kiedy widać | Co pokazuje |
-|---|---|---|
-| **Brzeg** | zawsze | cienka linia (148×5 px) - proporcje limitów 5 h / 7 dni jako dwa paski rosnące ku barwnemu znacznikowi stanu, który jest granicą między nimi (paski nie spotykają się na środku) |
-| **Pasek** | po najechaniu kursorem (o ile włączone w menu) | mały pierścień stanu, wartość (czas albo nazwa stanu) i oba mierniki w linii z procentami |
-| **Panel** | po kliknięciu, do kolejnego kliknięcia | pełna lista sesji (projekt, stan, wiek) i mierniki limitów z terminem resetu oraz przyciskiem ręcznego odświeżenia |
+# Claude Status Overlay
 
-Trzy poziomy przenikają się płynnym morfingiem (380 ms); kotwica lewa/prawa
-krawędź obraca brzeg i pasek do układu pionowego.
+### Cienka linia na krawędzi ekranu, która mówi, co robi Claude Code<br>— i ile limitu Ci zostało.
 
-| Znacznik | Stan | Kiedy |
-|---|---|---|
-| 🟠 bursztyn (pulsuje) | `pracuje` | wysłałeś prompt, Claude pracuje |
-| 🟢 zielony | `gotowe` | Claude skończył odpowiedź |
-| 🔵 niebieski (miga, 1 s) | `czeka na Ciebie` + dźwięk | prośba o zgodę na narzędzie / pytanie |
-| 🔴 czerwony (miga, 1,6 s) | `błąd` + dźwięk | tura przerwana błędem API / limitem |
-| ⚪ sam tor | `bezczynny` / brak sesji | nic się nie dzieje |
+[![wersja](https://img.shields.io/github/v/release/mcskypl/claude-status-overlay?style=for-the-badge&label=wersja&color=2f81f7)](https://github.com/mcskypl/claude-status-overlay/releases/latest)
+[![pobrania](https://img.shields.io/github/downloads/mcskypl/claude-status-overlay/total?style=for-the-badge&label=pobrania&color=3fb950)](https://github.com/mcskypl/claude-status-overlay/releases)
+[![Windows](https://img.shields.io/badge/Windows-10%20i%2011-0078d4?style=for-the-badge)](#wymagania)
 
-Mierniki limitów świecą na czerwono, gdy zostało poniżej 15 %, niezależnie od
-tego, które to okno.
+## [⬇&nbsp; Pobierz instalator](https://github.com/mcskypl/claude-status-overlay/releases/latest)
 
-To przepisanie wersji PowerShellowej (w `legacy/`) na C#, z drugim podejściem
-do wyglądu opartym na zaktualizowanym prototypie w `design_handoff_token_widget/`.
-Format plików stanu i konfiguracja zostały te same; zniknął serwer HTTP
-i powiadomienia push — widget działa wyłącznie lokalnie.
+<img src="docs/img/brzeg.png" width="560" alt="Pasek statusu na krawędzi ekranu">
 
-## Struktura
+<sub>Tyle zajmuje na ekranie. 148 × 5 px, zawsze na wierzchu, nigdy w drodze.</sub>
 
-```
-src/
-  ClaudeStatus.Core/      logika bez UI (używana przez hook i nakładkę)
-    ClaudePaths           ścieżki (~/.claude, CLAUDE_CONFIG_DIR)
-    Sessions/             pliki stanu, monitor w tle, kolejność, zmiany stanów
-    Liveness/             "czy stan jest jeszcze prawdziwy" (transkrypt, procesy narzędzi)
-    Usage/                limity 5 h / 7 dni: API Anthropic (token OAuth, tylko odczyt) + cache z ~/.claude.json
-    Hooks/                payload hooka, filtr szumu, rejestracja w settings.json
-    Update/               wydania na GitHubie: sprawdzanie, pobranie instalatora, cicha aktualizacja
-  ClaudeStatus.Hook/      ClaudeStatusHook.exe — wywoływany przez hooki Claude Code
-  ClaudeStatus.Overlay/   ClaudeStatusOverlay.exe — widget (WinForms, okno warstwowe)
-    App/                  konfiguracja, log, pojedyncza instancja
-    Interop/              UpdateLayeredWindow, szukanie okna edytora
-    Rendering/            metryki projektu, paleta, fonty, brzeg/pasek/panel, cień, kompozycja
-    Animation/            easing (cubic-bezier), morfing kształtu, niezależne fade'y, dojazd pasków
-    Placement/            kotwice i krawędzie ekranu
-    UI/                   okno, menu, dźwięki
-installer/                skrypt Inno Setup (ClaudeStatusOverlay-Setup.exe)
-tools/                    generator ikony, wydawanie wersji (tag + push)
-Build-Release.ps1         instalator + paczka portable w publish\
-Install.ps1               build + instalacja ze źródeł (bez instalatora)
-legacy/                   poprzednia wersja PowerShellowa (serwer, ntfy, demo)
-design_handoff_token_widget/  prototyp HTML — źródło wszystkich wymiarów i kolorów
-```
+</div>
 
-Zasada podziału: **Core nie wie nic o rysowaniu**, a **renderery nic o stanie
-aplikacji** — dostają gotowy `FrameInput` (czas, obraz sesji, wartości
-animacji) i zwracają bitmapę. Dzięki temu klatka jest czystą funkcją wejścia.
+<br>
 
-## Jak to działa
+## Znasz to?
 
-Claude Code ma system **hooków** — komend uruchamianych przy zdarzeniach sesji.
-`ClaudeStatusHook.exe --install` dopisuje do `~/.claude/settings.json` sześć
-hooków, które przy każdym zdarzeniu zapisują mały plik JSON w
-`~/.claude/status/<session_id>.json`:
+Wysyłasz prompt, przełączasz się do przeglądarki na „dwie minuty" — a Claude od kwadransa czeka, aż pozwolisz mu odpalić jedno polecenie. Albo w środku pracy okazuje się, że limit 5-godzinny skończył się dziesięć minut temu.
 
-| Zdarzenie Claude Code | Zapisywany stan |
-|---|---|
-| `SessionStart` | bezczynny |
-| `UserPromptSubmit` | pracuje |
-| `Notification` | czeka na Ciebie |
-| `Stop` | gotowe |
-| `StopFailure` | błąd |
-| `SessionEnd` | (kasuje wpis) |
+Ta nakładka rozwiązuje jedno i drugie. Rzut oka na krawędź ekranu i wiesz wszystko:
 
-Hooki są `async`, więc nie spowalniają Claude'a. Nakładka obserwuje katalog
-(`FileSystemWatcher` + odczyt co ~0,5 s w tle) i rysuje stan.
+|  | Stan | Kiedy |
+|:--:|---|---|
+| 🟠 | **pracuje** | Claude myśli, pisze, odpala narzędzia |
+| 🟢 | **gotowe** | skończył — możesz wracać |
+| 🔵 | **czeka na Ciebie** | pyta o zgodę na narzędzie *(+ dźwięk)* |
+| 🔴 | **błąd** | tura padła na błędzie albo limicie *(+ dźwięk)* |
 
-Claude Code nie ma zdarzenia „zgoda udzielona", więc po kliknięciu *Allow* stan
-zostałby czerwony do końca tury. `LiveStateResolver` szuka dowodów, że tura
-znowu leci: transkrypt urósł po alercie albo narzędzie odpalone po alercie
-(proces-dziecko Claude Code, młodszy od alertu, widziany dwa razy) nadal działa.
+A po bokach znacznika dwa paski: zużycie limitu **5 h** i **7 dni**, prosto z tego samego źródła co `/usage`. Bez wpisywania czegokolwiek w terminalu.
 
-## Limity 5 h i 7 dni
+<br>
 
-Nakładka pyta o nie **co 5 minut** (menu → *Odświeżaj limity*: co minutę,
-5, 10, 15, 30 minut) ten sam endpoint, z którego korzysta `/usage`
-w Claude Code i panel „Account & Usage" w VS Code
-(`GET https://api.anthropic.com/api/oauth/usage`), tokenem OAuth z
-`~/.claude/.credentials.json`. Częstsze pytanie potrafi skończyć się
-`HTTP 429` na dłuższą chwilę, więc domyślne 5 minut jest tu celowo
-zachowawcze - od ręki i tak można pobrać kołową strzałką w panelu. Zasady:
+## Trzy poziomy szczegółu
 
-- token jest **tylko czytany** — nakładka nigdy go nie odświeża (rotacja refresh
-  tokena zepsułaby sesję CLI) ani nie zapisuje; gdy wygaśnie, czeka, aż Claude
-  Code sam podmieni plik;
-- token idzie wyłącznie do `api.anthropic.com`, w nagłówku `Authorization`;
-- wyłączenie punktu **Limity 5 h / 7 dni** w menu wyłącza też cały ruch sieciowy;
-- po błędzie kolejna próba za 2 min, a przy rzadszym ustawieniu - dopiero po
-  wybranym odstępie (błąd nigdy nie przyspiesza pytania); gdy API milczy dłużej
-  niż godzinę, dane dostają znak `?`, po dobie znikają.
+Nakładka rośnie dokładnie wtedy, kiedy jej potrzebujesz — i sama wraca do cienkiej linii.
 
-Źródłem awaryjnym jest `cachedUsageUtilization` z `~/.claude.json` — ale ten
-wpis odświeża tylko terminalowe TUI `claude` (sesje w VS Code go nie ruszają),
-więc sam w sobie bywa wielogodzinny. Nakładka bierze zawsze nowsze z obu.
-Po minięciu terminu zerowania okno pokazuje 0 % zużycia. Procenty i paski
-używają tej samej konwencji co `/usage` i VS Code: **ile zużyto**, pasek
-rośnie razem ze zużyciem.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-Na obu miernikach (5 h i 7 dni) biała kreska pokazuje, **ile z okna czasowego
-już minęło** - gdy wypełnienie zużyciem jest przed kreską, palisz limit
-wolniej, niż leci czas; gdy za nią, szybciej.
+**Najedź myszką → pasek**
 
-Panel pokazuje też pod miernikami e-mail zalogowanego konta
-(`oauthAccount.emailAddress` z `~/.claude.json`) i wiek ostatniego pobrania
-limitów ("odświeżono 2m temu") - obie wartości znikają razem z limitami,
-gdy są wyłączone w menu. Obok wieku siedzi **kołowa strzałka**: klik pobiera
-limity od razu, nie czekając na kolejną minutę. Ikona kręci się, dopóki nie
-przyjdą nowe dane (i przestaje po 8 s, gdy API milczy).
+<img src="docs/img/pasek.png" alt="Pasek">
 
-## Instalacja
+Stan, czas i oba liczniki w jednej linii.
 
-Pobierz `ClaudeStatusOverlay-Setup-<wersja>.exe` z
-[wydań](https://github.com/mcskypl/claude-status-overlay/releases) i uruchom. Kreator ma dwa
-kliknięcia: pyta tylko o autostart (i o usunięcie starej wersji PowerShellowej,
-jeśli ją znajdzie). Nie wymaga uprawnień administratora.
+</td>
+<td width="50%" valign="top">
 
-Co robi:
+**Kliknij → panel**
 
-- kopiuje pliki do `%LOCALAPPDATA%\Programs\Claude Status Overlay`,
-- dopisuje hooki do `~/.claude/settings.json` (robiąc kopię
-  `settings.json.bak-<data>` i **usuwając hooki starej wersji PowerShellowej**),
-- opcjonalnie dodaje skrót do autostartu,
-- uruchamia nakładkę,
-- gdy brakuje **.NET Desktop Runtime 10**, proponuje pobranie go z microsoft.com
-  i instaluje po cichu.
+Wszystkie sesje naraz: projekt, stan, jak dawno. Klik w wiersz przełącza na okno edytora tej sesji.
 
-Potem **zamknij i otwórz ponownie sesje Claude Code** — hooki ładują się przy
-starcie sesji.
+</td>
+</tr>
+</table>
 
-Deinstalacja: *Ustawienia → Aplikacje → Claude Status Overlay → Odinstaluj*
-(albo `unins000.exe` z katalogu instalacji). Deinstalator wypisuje hooki
-z `settings.json`, zostawiając Twoje własne.
+<div align="center">
+<img src="docs/img/panel.png" width="430" alt="Panel ze wszystkimi sesjami i limitami">
+</div>
 
-### Bez instalatora
+Biała kreska na pasku limitu pokazuje, **ile z okna czasowego już minęło**. Wypełnienie przed kreską = palisz limit wolniej, niż leci czas. Za kreską = szybciej, niż powinieneś.
 
-W wydaniu jest też `ClaudeStatusOverlay-<wersja>-portable.zip` - rozpakuj
-gdziekolwiek, uruchom `ClaudeStatusHook.exe --install` (hooki) i
-`ClaudeStatusOverlay.exe`.
+<br>
 
-Ze źródeł (wymaga [.NET SDK 10](https://dotnet.microsoft.com/download)):
+## Instalacja — dosłownie 30 sekund
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Autostart   # build + instalacja do ~/.claude/status-overlay
-powershell -ExecutionPolicy Bypass -File .\Build-Release.ps1        # instalator + zip w publish\
-```
+1. **[Pobierz `ClaudeStatusOverlay-Setup.exe`](https://github.com/mcskypl/claude-status-overlay/releases/latest)** i uruchom.
+2. Kreator pyta tylko o autostart. **Bez uprawnień administratora**, bez pytania o katalog.
+3. **Zamknij i otwórz na nowo sesje Claude Code** — nakładka podpina się do nich przez hooki, które ładują się przy starcie sesji.
 
-## Aktualizacje
+To wszystko. Instalator sam dopisuje hooki do `settings.json` (robiąc wcześniej kopię zapasową) i sam dociąga .NET Desktop Runtime 10, jeśli go nie masz.
 
-Nakładka raz na dobę pyta publiczne API GitHuba o najnowsze wydanie
-(`/repos/mcskypl/claude-status-overlay/releases/latest`) - bez tokena, bez wysyłania czegokolwiek
-o Tobie. Gdy wersja z tagu jest wyższa niż ta, która chodzi:
+> Wolisz bez instalatora? W każdym wydaniu jest też `...-portable.zip`.
 
-- na dole panelu pojawia się wiersz **„nowa wersja 2.1.0 - zaktualizuj"**,
-- w menu, na samej górze, pogrubione **„Zaktualizuj do 2.1.0"**.
+<br>
 
-Klik pobiera instalator z załączników wydania (z paskiem postępu w panelu)
-i uruchamia go po cichu: instalator zamyka nakładkę, podmienia pliki, odświeża
-hooki i uruchamia nową wersję. Ustawienia i pozycja zostają.
+## Aktualizuje się sama
 
-Menu → *Aktualizacje* ma „Sprawdź teraz", przełącznik codziennego sprawdzania
-(wyłączenie = zero ruchu w sieci) i numer bieżącej wersji.
+Gdy pojawi się nowa wersja, nakładka daje znać — jeden klik i po sprawie: pobiera, podmienia, wraca na swoje miejsce razem z Twoimi ustawieniami.
 
-## Obsługa
+<div align="center">
+<img src="docs/img/menu.png" width="230" alt="Menu pod prawym przyciskiem">
+</div>
 
-- **Najechanie myszką** — rozwija brzeg w pasek (podgląd z licznikami), zjazd
-  kursorem go zwija. Po wyłączeniu „Rozwijaj po najechaniu" najechanie nic
-  nie robi - liczy się tylko klik.
-- **Lewy przycisk + przeciągnięcie** — przesuwanie (pozycja jest zapamiętywana,
-  kotwica przełącza się na „Dowolna"). Po włączeniu „Zablokuj przesuwanie"
-  przeciągnięcie nie robi nic - ani nie rusza widgetu, ani nie liczy się jako
-  klik; reszta (najechanie, klik, menu) działa normalnie.
-- **Lewy przycisk, klik** — przełącza pełny panel z listą sesji; kolejny klik
-  albo **klik gdziekolwiek indziej na ekranie** go zamyka (powrót do paska,
-  jeśli kursor wciąż jest na widgecie, inaczej do brzegu) - jak każdy popover.
-  Klik w konkretny wiersz panelu aktywuje okno edytora tej sesji, a klik
-  w kołową strzałkę przy „odświeżono ... temu" pobiera limity od ręki.
-- **Prawy przycisk** — menu: pozycja (8 krawędzi/rogów + dowolna), odklejona od
-  krawędzi, zablokuj przesuwanie, dźwięki, rozwijanie po najechaniu,
-  limity 5 h / 7 dni, jak często je odświeżać (co 1 / 5 / 10 / 15 / 30 minut -
-  wyszarzone przy wyłączonych limitach), zawsze na wierzchu, wyczyść zakończone
-  sesje, aktualizacje, zamknij. Gdy czeka nowa wersja, na górze menu dochodzi
-  pogrubione „Zaktualizuj do ...".
+Pod prawym przyciskiem siedzi cała reszta: pozycja przy dowolnej krawędzi lub rogu, blokada przesuwania, dźwięki, częstotliwość odświeżania limitów, „zawsze na wierzchu".
 
-Ustawienia: `%USERPROFILE%\.claude\status-overlay.config.json`
-(`X`, `Y`, `Anchor`, `Detached`, `Locked`, `Sound`, `TopMost`, `Hover`,
-`Usage`, `UsageIntervalSeconds`, `Updates`) — zgodne ze starą wersją (klucze
-dopisane później mają sensowne domyślne: odblokowane, 5 minut, aktualizacje
-włączone). Błędy lądują w `%USERPROFILE%\.claude\status-overlay.log`.
+<br>
 
-Wiersz poleceń:
+## Wymagania
 
-```
-ClaudeStatusOverlay.exe          uruchom (jedna instancja naraz)
-ClaudeStatusOverlay.exe --exit   zamknij działającą nakładkę
-ClaudeStatusHook.exe --state <idle|working|done|attention|error|end> [--note "..."]
-ClaudeStatusHook.exe --install | --uninstall
-```
+- **Windows 10 lub 11** (64-bit)
+- **[Claude Code](https://claude.com/claude-code)** — w terminalu, VS Code, JetBrains, obojętnie
+- .NET Desktop Runtime 10 — *instalator zainstaluje go za Ciebie, jeśli trzeba*
 
-## Płynność
+## Prywatność
 
-- Wszystkie animacje są sterowane zegarem (`Stopwatch`), nie licznikiem
-  klatek — morfing kształtu trwa dokładnie 380 ms z krzywą
-  `cubic-bezier(.22,1,.36,1)` niezależnie od obciążenia. Trzy poziomy
-  (brzeg/pasek/panel) przenikają niezależnie, każdy własnym fade'em
-  (`FadeAnimation`), a kształt powłoki (`ShapeMorph`) po prostu animuje
-  bieżące piksele do nowego celu - tak jak CSS `transition: width, height,
-  border-radius` - więc przełączenie w trakcie animacji nie powoduje skoku.
-- Przy ciągłej animacji (morfing, obrót łuku, miganie, dojazd pasków) pętla
-  tyka co 15 ms (~64 fps). Poza tym tylko sonduje kursor co 50 ms, a rysuje
-  dopiero, gdy coś się zmieniło (sekunda zegara - tylko gdy widoczny jest
-  tekst z wiekiem, nowe dane, wiersz pod kursorem) — w spoczynku ~0–1 % CPU.
-- Pozycja, rozmiar i obraz okna zmieniają się w jednym wywołaniu
-  `UpdateLayeredWindow`, więc panel rosnący „w górę" (kotwica dolna) nie skacze.
-- Odczyt dysku i odpytywanie procesów dzieją się w wątku monitora; wątek UI
-  bierze tylko gotowy, niezmienny `SessionSnapshot`.
-- Cień jest liczony jak w przeglądarce (`0 18px 40px -14px`: kształt
-  zmniejszony o 14 px, przesunięty o 18 px, Gauss σ = 20 px jako 3× box blur
-  na kanale alfa), raz na kształt i trzymany w cache; fonty, pędzle i bitmapy
-  warstw są wielokrotnego użytku, odtwarzane tylko przy zmianie DPI
-  (per-monitor v2).
+Nakładka nie ma serwera, konta ani telemetrii. Wychodzi z Twojego komputera tylko po dwie rzeczy, obie do wyłączenia jednym kliknięciem w menu:
 
-## Wydawanie nowej wersji
+- **limity** — `api.anthropic.com`, tym samym tokenem, którego już używa Claude Code (tylko do odczytu),
+- **aktualizacje** — publiczne API GitHuba, raz na dobę, bez żadnych danych o Tobie.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\Publish-Version.ps1 -Version 2.1.0
-```
+<br>
 
-Skrypt podbija `<Version>` w `Directory.Build.props`, robi commit `wydanie 2.1.0`,
-tag `v2.1.0` i wysyła jedno i drugie. Resztę robi workflow
-[`release.yml`](.github/workflows/release.yml) na GitHubie: buduje instalator
-i paczkę portable, sprawdza, czy tag zgadza się z wersją w repozytorium,
-i tworzy wydanie z załącznikami. Nakładki zauważą je przy najbliższym
-sprawdzeniu (raz na dobę) albo po „Sprawdź teraz" z menu.
+---
 
-Lokalnie to samo bez publikowania: `.\Build-Release.ps1` (wynik w `publish\`).
-Ikonę aplikacji generuje `tools\New-AppIcon.ps1` - jest w repozytorium gotowa,
-skrypt przydaje się tylko przy zmianie wyglądu.
+<div align="center">
 
-Repozytorium, z którego nakładka bierze aktualizacje, siedzi w jednym miejscu:
-`UpdateSource.Repo` w [`src/ClaudeStatus.Core/Update/UpdateSource.cs`](src/ClaudeStatus.Core/Update/UpdateSource.cs).
-Po sforkowaniu wystarczy podmienić tam „właściciel/nazwa"; wartość zastępcza
-z `OWNER` wyłącza sprawdzanie aktualizacji i wtedy nakładka nie rusza w tej
-sprawie sieci.
+### Podoba się?
 
-## Demo
+Nakładka jest darmowa i będzie. Jeśli oszczędziła Ci choć jedno „ile on tam znowu czeka" — postaw kawę:
 
-Skrypt `legacy/Demo-ClaudeStatus.ps1` pisze te same pliki stanu, więc działa
-z nową nakładką:
+[![Postaw mi kawę](https://img.shields.io/badge/Postaw%20mi%20kaw%C4%99-%E2%98%95-FFDD00?style=for-the-badge&labelColor=000000)](https://buymeacoffee.com/mcskypl)
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\legacy\Demo-ClaudeStatus.ps1 -NoOverlay
-```
+A jeśli nie — zostaw ⭐ na repo, to też pomaga.
 
-(`-NoOverlay`, bo skrypt próbowałby uruchomić starą wersję; nowa musi już działać).
+<br>
 
-## Diagnostyka
+**[⬇ Pobierz](https://github.com/mcskypl/claude-status-overlay/releases/latest)** · **[Zgłoś problem](https://github.com/mcskypl/claude-status-overlay/issues)** · **[Dokumentacja techniczna](docs/dokumentacja.md)**
 
-**Sprawdzenie, czy hook zapisuje:**
-
-```powershell
-'{"session_id":"test","cwd":"C:\\repo\\Testowy"}' |
-  & "$env:USERPROFILE\.claude\status-overlay\ClaudeStatusHook.exe" --state working
-Get-ChildItem "$env:USERPROFILE\.claude\status"
-```
-
-Powinien pojawić się `test.json`, a na pastylce kręcący się bursztynowy łuk.
-Posprzątanie: `'{"session_id":"test"}' | & ...\ClaudeStatusHook.exe --state end`.
-
-**Pusty okrąg mimo pracującego Claude'a** — sesja otwarta przed instalacją
-hooków. Zamknij ją i otwórz nową.
-
-**Za dużo czerwonych alertów** — `Notification` odpala się przy różnych typach
-powiadomień; filtr jest w `Core/Hooks/HookProcessor.cs` (`NotificationFilter`).
+</div>
