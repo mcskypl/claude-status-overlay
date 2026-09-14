@@ -58,10 +58,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $tag = 'v${{ steps.version.outputs.version }}'
           $files = Get-ChildItem publish\*.exe, publish\*.zip | ForEach-Object { $_.FullName }
-          gh release create 'v${{ steps.version.outputs.version }}' $files `
-            --title 'Claude Status Overlay ${{ steps.version.outputs.version }}' `
-            --generate-notes
+
+          # ponowny przebieg dla tego samego tagu (np. po jego przestawieniu)
+          # ma podmienić załączniki, a nie wywalić się na "release already exists"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Wydanie $tag już jest - podmieniam załączniki"
+            gh release upload $tag $files --clobber
+          } else {
+            gh release create $tag $files `
+              --title "Claude Status Overlay ${{ steps.version.outputs.version }}" `
+              --generate-notes
+          }
 
       - uses: actions/upload-artifact@v4
         with:
