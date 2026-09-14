@@ -38,6 +38,7 @@ src/
     Liveness/             "czy stan jest jeszcze prawdziwy" (transkrypt, procesy narzędzi)
     Usage/                limity 5 h / 7 dni: API Anthropic (token OAuth, tylko odczyt) + cache z ~/.claude.json
     Hooks/                payload hooka, filtr szumu, rejestracja w settings.json
+    Update/               wydania na GitHubie: sprawdzanie, pobranie instalatora, cicha aktualizacja
   ClaudeStatus.Hook/      ClaudeStatusHook.exe — wywoływany przez hooki Claude Code
   ClaudeStatus.Overlay/   ClaudeStatusOverlay.exe — widget (WinForms, okno warstwowe)
     App/                  konfiguracja, log, pojedyncza instancja
@@ -46,7 +47,10 @@ src/
     Animation/            easing (cubic-bezier), morfing kształtu, niezależne fade'y, dojazd pasków
     Placement/            kotwice i krawędzie ekranu
     UI/                   okno, menu, dźwięki
-Install.ps1               build + instalacja
+installer/                skrypt Inno Setup (ClaudeStatusOverlay-Setup.exe)
+tools/                    generator ikony, wydawanie wersji (tag + push)
+Build-Release.ps1         instalator + paczka portable w publish\
+Install.ps1               build + instalacja ze źródeł (bez instalatora)
 legacy/                   poprzednia wersja PowerShellowa (serwer, ntfy, demo)
 design_handoff_token_widget/  prototyp HTML — źródło wszystkich wymiarów i kolorów
 ```
@@ -118,29 +122,56 @@ przyjdą nowe dane (i przestaje po 8 s, gdy API milczy).
 
 ## Instalacja
 
-Wymagania: Windows 10/11, [.NET SDK 10](https://dotnet.microsoft.com/download)
-(do zbudowania; do samego działania wystarczy .NET Desktop Runtime 10).
+Pobierz `ClaudeStatusOverlay-Setup-<wersja>.exe` z
+[wydań](https://github.com/OWNER/REPO/releases) i uruchom. Kreator ma dwa
+kliknięcia: pyta tylko o autostart (i o usunięcie starej wersji PowerShellowej,
+jeśli ją znajdzie). Nie wymaga uprawnień administratora.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Autostart
-```
+Co robi:
 
-Instalator buduje oba exe (`dotnet publish`), kopiuje je do
-`%USERPROFILE%\.claude\status-overlay`, dopisuje hooki (robiąc kopię
-`settings.json.bak-<data>` i **usuwając hooki starej wersji PowerShellowej**),
-opcjonalnie dodaje skrót do autostartu i uruchamia nakładkę. Jest idempotentny.
+- kopiuje pliki do `%LOCALAPPDATA%\Programs\Claude Status Overlay`,
+- dopisuje hooki do `~/.claude/settings.json` (robiąc kopię
+  `settings.json.bak-<data>` i **usuwając hooki starej wersji PowerShellowej**),
+- opcjonalnie dodaje skrót do autostartu,
+- uruchamia nakładkę,
+- gdy brakuje **.NET Desktop Runtime 10**, proponuje pobranie go z microsoft.com
+  i instaluje po cichu.
 
 Potem **zamknij i otwórz ponownie sesje Claude Code** — hooki ładują się przy
 starcie sesji.
 
-Deinstalacja (z katalogu repozytorium):
+Deinstalacja: *Ustawienia → Aplikacje → Claude Status Overlay → Odinstaluj*
+(albo `unins000.exe` z katalogu instalacji). Deinstalator wypisuje hooki
+z `settings.json`, zostawiając Twoje własne.
+
+### Bez instalatora
+
+W wydaniu jest też `ClaudeStatusOverlay-<wersja>-portable.zip` - rozpakuj
+gdziekolwiek, uruchom `ClaudeStatusHook.exe --install` (hooki) i
+`ClaudeStatusOverlay.exe`.
+
+Ze źródeł (wymaga [.NET SDK 10](https://dotnet.microsoft.com/download)):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass -File .\Install.ps1 -Autostart   # build + instalacja do ~/.claude/status-overlay
+powershell -ExecutionPolicy Bypass -File .\Build-Release.ps1        # instalator + zip w publish\
 ```
 
-Usuwa hooki z `settings.json` (zostawiając Twoje własne), skrót z autostartu
-i katalog z plikami.
+## Aktualizacje
+
+Nakładka raz na dobę pyta publiczne API GitHuba o najnowsze wydanie
+(`/repos/OWNER/REPO/releases/latest`) - bez tokena, bez wysyłania czegokolwiek
+o Tobie. Gdy wersja z tagu jest wyższa niż ta, która chodzi:
+
+- na dole panelu pojawia się wiersz **„nowa wersja 2.1.0 - zaktualizuj"**,
+- w menu, na samej górze, pogrubione **„Zaktualizuj do 2.1.0"**.
+
+Klik pobiera instalator z załączników wydania (z paskiem postępu w panelu)
+i uruchamia go po cichu: instalator zamyka nakładkę, podmienia pliki, odświeża
+hooki i uruchamia nową wersję. Ustawienia i pozycja zostają.
+
+Menu → *Aktualizacje* ma „Sprawdź teraz", przełącznik codziennego sprawdzania
+(wyłączenie = zero ruchu w sieci) i numer bieżącej wersji.
 
 ## Obsługa
 
@@ -160,13 +191,14 @@ i katalog z plikami.
   krawędzi, zablokuj przesuwanie, dźwięki, rozwijanie po najechaniu,
   limity 5 h / 7 dni, jak często je odświeżać (co 1 / 5 / 10 / 15 / 30 minut -
   wyszarzone przy wyłączonych limitach), zawsze na wierzchu, wyczyść zakończone
-  sesje, zamknij.
+  sesje, aktualizacje, zamknij. Gdy czeka nowa wersja, na górze menu dochodzi
+  pogrubione „Zaktualizuj do ...".
 
 Ustawienia: `%USERPROFILE%\.claude\status-overlay.config.json`
 (`X`, `Y`, `Anchor`, `Detached`, `Locked`, `Sound`, `TopMost`, `Hover`,
-`Usage`, `UsageIntervalSeconds`) — zgodne ze starą wersją (`Locked`
-i `UsageIntervalSeconds` doszły później: brak w pliku = odblokowane i 5 minut).
-Błędy lądują w `%USERPROFILE%\.claude\status-overlay.log`.
+`Usage`, `UsageIntervalSeconds`, `Updates`) — zgodne ze starą wersją (klucze
+dopisane później mają sensowne domyślne: odblokowane, 5 minut, aktualizacje
+włączone). Błędy lądują w `%USERPROFILE%\.claude\status-overlay.log`.
 
 Wiersz poleceń:
 
@@ -199,6 +231,28 @@ ClaudeStatusHook.exe --install | --uninstall
   na kanale alfa), raz na kształt i trzymany w cache; fonty, pędzle i bitmapy
   warstw są wielokrotnego użytku, odtwarzane tylko przy zmianie DPI
   (per-monitor v2).
+
+## Wydawanie nowej wersji
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\Publish-Version.ps1 -Version 2.1.0
+```
+
+Skrypt podbija `<Version>` w `Directory.Build.props`, robi commit `wydanie 2.1.0`,
+tag `v2.1.0` i wysyła jedno i drugie. Resztę robi workflow
+[`release.yml`](.github/workflows/release.yml) na GitHubie: buduje instalator
+i paczkę portable, sprawdza, czy tag zgadza się z wersją w repozytorium,
+i tworzy wydanie z załącznikami. Nakładki zauważą je przy najbliższym
+sprawdzeniu (raz na dobę) albo po „Sprawdź teraz" z menu.
+
+Lokalnie to samo bez publikowania: `.\Build-Release.ps1` (wynik w `publish\`).
+Ikonę aplikacji generuje `tools\New-AppIcon.ps1` - jest w repozytorium gotowa,
+skrypt przydaje się tylko przy zmianie wyglądu.
+
+Repozytorium, z którego nakładka bierze aktualizacje, siedzi w jednym miejscu:
+`UpdateSource.Repo` w [`src/ClaudeStatus.Core/Update/UpdateSource.cs`](src/ClaudeStatus.Core/Update/UpdateSource.cs).
+Dopóki stoi tam `OWNER/REPO`, sprawdzanie aktualizacji jest wyłączone i nakładka
+nie rusza w tej sprawie sieci.
 
 ## Demo
 
