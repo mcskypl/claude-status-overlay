@@ -4,10 +4,7 @@
 
 # Claude Status Overlay
 
-### Cienka linia na krawędzi ekranu, która mówi, co robi Claude Code<br>— i ile limitu Ci zostało.
-
 [![wersja](https://img.shields.io/github/v/release/mcskypl/claude-status-overlay?style=for-the-badge&label=wersja&color=2f81f7)](https://github.com/mcskypl/claude-status-overlay/releases/latest)
-[![pobrania](https://img.shields.io/github/downloads/mcskypl/claude-status-overlay/total?style=for-the-badge&label=pobrania&color=3fb950)](https://github.com/mcskypl/claude-status-overlay/releases)
 [![Windows](https://img.shields.io/badge/Windows-10%20i%2011-0078d4?style=for-the-badge)](#wymagania)
 
 ## [⬇&nbsp; Pobierz instalator](https://github.com/mcskypl/claude-status-overlay/releases/latest)
@@ -17,23 +14,6 @@
 <sub>Tyle zajmuje na ekranie. 148 × 5 px, zawsze na wierzchu, nigdy w drodze.</sub>
 
 </div>
-
-<br>
-
-## Znasz to?
-
-Wysyłasz prompt, przełączasz się do przeglądarki na „dwie minuty" — a Claude od kwadransa czeka, aż pozwolisz mu odpalić jedno polecenie. Albo w środku pracy okazuje się, że limit 5-godzinny skończył się dziesięć minut temu.
-
-Ta nakładka rozwiązuje jedno i drugie. Rzut oka na krawędź ekranu i wiesz wszystko:
-
-|  | Stan | Kiedy |
-|:--:|---|---|
-| 🟠 | **pracuje** | Claude myśli, pisze, odpala narzędzia |
-| 🟢 | **gotowe** | skończył — możesz wracać |
-| 🔵 | **czeka na Ciebie** | pyta o zgodę na narzędzie *(+ dźwięk)* |
-| 🔴 | **błąd** | tura padła na błędzie albo limicie *(+ dźwięk)* |
-
-A po bokach znacznika dwa paski: zużycie limitu **5 h** i **7 dni**, prosto z tego samego źródła co `/usage`. Bez wpisywania czegokolwiek w terminalu.
 
 <br>
 
@@ -70,7 +50,7 @@ Biała kreska na pasku limitu pokazuje, **ile z okna czasowego już minęło**. 
 
 <br>
 
-## Instalacja — dosłownie 30 sekund
+## Instalacja
 
 1. **[Pobierz `ClaudeStatusOverlay-Setup.exe`](https://github.com/mcskypl/claude-status-overlay/releases/latest)** i uruchom.
 2. Kreator pyta tylko o autostart. **Bez uprawnień administratora**, bez pytania o katalog.
@@ -115,9 +95,9 @@ Nakładka nie ma serwera, konta ani telemetrii. Wychodzi z Twojego komputera tyl
 
 ### Podoba się?
 
-Nakładka jest darmowa i będzie. Jeśli oszczędziła Ci choć jedno „ile on tam znowu czeka" — postaw kawę:
+Nakładka jest darmowa i będzie. Jeśli oszczędziła Ci choć trochę czasu — postaw kawę:
 
-[![Postaw mi kawę](https://img.shields.io/badge/Postaw%20mi%20kaw%C4%99-%E2%98%95-FFDD00?style=for-the-badge&labelColor=000000)](https://buymeacoffee.com/mcskypl)
+<a href="https://buycoffee.to/pixelcodelab" target="_blank"><img src="https://buycoffee.to/static/img/share/share-button-dark--pl.png" style="width: 351px; height: 92px" alt="Postaw kawę dla Pixelcodelab na buycoffee.to"></a>
 
 A jeśli nie — zostaw ⭐ na repo, to też pomaga.
 
