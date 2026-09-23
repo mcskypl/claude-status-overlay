@@ -33,6 +33,36 @@ public sealed class OverlayConfig
     /// <summary>Rozwijanie po najechaniu; wyłączone = rozwija klik.</summary>
     public bool Hover { get; set; } = true;
 
+    /// <summary>
+    /// Pastylka stoi rozwinięta w pasek na stałe - tak jak po najechaniu, tyle że
+    /// zjazd kursorem jej nie zwija. Nadrzędne wobec <see cref="Hover"/>: kursor
+    /// nie ma już czego rozwijać, ale samo ustawienie zostaje nietknięte i wraca
+    /// do gry, gdy tylko pastylka znów ma się zwijać.
+    /// </summary>
+    public bool AlwaysExpanded { get; set; }
+
+    /// <summary>
+    /// Czy przy otwarciu panelu obok niego staje rozwinięta rozmowa. Przełącznik
+    /// siedzi w nagłówku panelu i w nagłówku rozmowy; wybór zostaje na kolejne
+    /// otwarcia, bo to preferencja, a nie stan jednej sesji.
+    /// </summary>
+    public bool AssistantExpanded { get; set; } = true;
+
+    /// <summary>
+    /// Dymek z gotową odpowiedzią pod pastylką. Pokazuje się tylko wtedy, gdy
+    /// rozmowa jest schowana - przy otwartej byłby powtórzeniem tego, co widać.
+    /// </summary>
+    public bool AssistantToast { get; set; } = true;
+
+    /// <summary>Po ilu sekundach dymek znika sam; najechanie kursorem wstrzymuje odliczanie.</summary>
+    public int AssistantToastSeconds { get; set; } = 8;
+
+    /// <summary>
+    /// Model asystenta wybrany w nagłówku rozmowy (alias albo pełny identyfikator,
+    /// np. <c>opus[1m]</c>, <c>sonnet</c>). Pusty = ten z settings.json Claude Code.
+    /// </summary>
+    public string? AssistantModel { get; set; }
+
     /// <summary>Paski i mierniki limitów 5 h / 7 dni.</summary>
     public bool Usage { get; set; } = true;
 

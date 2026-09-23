@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:; connect-src 'none'">
+<title>Asystent</title>
+<link rel="stylesheet" href="assistant.css">
+</head>
+<body>
+
+<!-- Jedno okno, nie dwa panele obok siebie. Limity siedzą w nagłówku, konto
+     i odświeżanie w stopce - tam, gdzie wcześniej była osobna kolumna sesji. -->
+<div class="app closed" id="app" data-anchor="top">
+
+  <section class="pane" id="chat">
+
+    <header class="chat-head">
+      <span class="state-dot" id="state-dot"></span>
+      <span class="convo-title" id="convo-title">Nowa rozmowa</span>
+      <span class="context-chip" id="context-chip">—</span>
+
+      <div class="model-picker">
+        <button class="model-chip" id="model-chip" type="button"
+                aria-haspopup="listbox" aria-expanded="false" title="Zmień model">
+          <span class="model-name" id="model-name">—</span>
+          <span class="model-caret">▾</span>
+        </button>
+        <div class="model-menu hidden" id="model-menu" role="listbox" aria-label="Model"></div>
+      </div>
+
+      <span class="spacer"></span>
+
+      <div class="limits">
+        <div class="limit limit-5h" id="limit-5h">
+          <div class="limit-top">
+            <span class="limit-label">5H</span>
+            <span class="spacer"></span>
+            <span class="limit-pct">—</span>
+          </div>
+          <div class="meter">
+            <div class="meter-fill" style="width:0%"></div>
+            <div class="meter-pace" style="left:0%"></div>
+          </div>
+          <span class="limit-reset"></span>
+        </div>
+        <div class="limit limit-7d" id="limit-7d">
+          <div class="limit-top">
+            <span class="limit-label">7D</span>
+            <span class="spacer"></span>
+            <span class="limit-pct">—</span>
+          </div>
+          <div class="meter">
+            <div class="meter-fill" style="width:0%"></div>
+            <div class="meter-pace" style="left:0%"></div>
+          </div>
+          <span class="limit-reset"></span>
+        </div>
+      </div>
+    </header>
+
+    <div class="chat-body">
+
+      <div class="history hidden" id="history" aria-label="Historia rozmów">
+        <div class="history-head">
+          <div class="label-caps" style="letter-spacing:.08em">Historia rozmów</div>
+          <button class="history-close" id="history-close" type="button">Zamknij</button>
+        </div>
+        <div id="history-list"></div>
+      </div>
+
+      <div class="scroll" id="scroll">
+        <div class="empty appear" id="empty">
+          <div class="empty-title">W czym pomóc?</div>
+          <div class="empty-lead" id="empty-lead"></div>
+          <div class="empty-examples" id="empty-examples"></div>
+        </div>
+        <div class="turns hidden" id="turns"></div>
+      </div>
+
+      <div class="composer">
+        <div class="field" id="field">
+          <div class="field-lead">
+            <button class="icon-btn" id="new-convo" type="button"
+                    title="Nowa rozmowa" aria-label="Nowa rozmowa">+</button>
+            <button class="icon-btn" id="history-btn" type="button"
+                    title="Historia rozmów" aria-label="Historia rozmów">☰</button>
+          </div>
+          <textarea id="prompt" rows="1" maxlength="4000" placeholder="Napisz, czego potrzebujesz…"
+                    aria-label="Treść zapytania" autocomplete="off" spellcheck="false"></textarea>
+          <div class="field-actions">
+            <button class="mic" id="mic" type="button" data-state="disabled"
+                    title="Dyktowanie — wkrótce" aria-label="Dyktowanie — wkrótce" disabled>
+              <span class="mic-glyph"></span>
+              <span class="mic-bars"><span></span><span></span><span></span><span></span></span>
+              <span class="mic-spinner"></span>
+            </button>
+            <button class="send" id="send" type="button" title="Wyślij (Enter)" aria-label="Wyślij">↵</button>
+          </div>
+        </div>
+        <button class="update hidden" id="update" type="button">
+          <span class="update-fill" id="update-fill"></span>
+          <span class="update-text" id="update-text"></span>
+        </button>
+        <div class="hints">
+          <span><b class="key">Enter</b> wyślij</span>
+          <span><b class="key">Shift+Enter</b> nowa linia</span>
+          <span><b class="key">Esc</b> schowaj</span>
+          <span class="char-count" id="char-count"></span>
+          <span class="spacer"></span>
+          <span class="refreshed" id="refreshed"></span>
+          <button class="refresh-ring" id="refresh" type="button"
+                  title="Odśwież limity" aria-label="Odśwież limity"></button>
+          <span class="account" id="account"></span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+
+<script src="markdown.js"></script>
+<script src="assistant.js"></script>
+</body>
+</html>

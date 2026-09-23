@@ -31,7 +31,8 @@ public interface IOverlayCommands
 
 /// <summary>
 /// Menu kontekstowe: pozycja, odklejenie od krawędzi, blokada przesuwania, dźwięki, rozwijanie
-/// po najechaniu, limity wraz z częstością ich odświeżania, zawsze na wierzchu, wyczyść, zamknij.
+/// po najechaniu, rozwinięcie na stałe, limity wraz z częstością ich odświeżania, zawsze
+/// na wierzchu, wyczyść, zamknij.
 /// </summary>
 public sealed class OverlayMenu : ContextMenuStrip
 {
@@ -78,6 +79,8 @@ public sealed class OverlayMenu : ContextMenuStrip
         Items.Add(new ToolStripSeparator());
         Items.Add(Toggle("Dźwięki", () => _config.Sound, v => _config.Sound = v, commands));
         Items.Add(Toggle("Rozwijaj po najechaniu", () => _config.Hover, v => _config.Hover = v, commands));
+        Items.Add(Toggle("Zawsze rozwinięta", () => _config.AlwaysExpanded, v => _config.AlwaysExpanded = v, commands));
+        Items.Add(Toggle("Dymek z odpowiedzią", () => _config.AssistantToast, v => _config.AssistantToast = v, commands));
         Items.Add(Toggle("Limity 5 h / 7 dni", () => _config.Usage, v => _config.Usage = v, commands));
         Items.Add(_intervalMenu);
         Items.Add(Toggle("Zawsze na wierzchu", () => _config.TopMost, v => _config.TopMost = v, commands));

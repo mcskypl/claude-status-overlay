@@ -1,4 +1,5 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using ClaudeStatus.Core.Sessions;
 using ClaudeStatus.Core.Update;
 using ClaudeStatus.Core.Usage;
@@ -8,6 +9,7 @@ using ClaudeStatus.Overlay.Interop;
 using ClaudeStatus.Overlay.Model;
 using ClaudeStatus.Overlay.Placement;
 using ClaudeStatus.Overlay.Rendering;
+using static ClaudeStatus.Overlay.Interop.NativeMethods;
 
 namespace ClaudeStatus.Overlay.UI;
 
@@ -17,21 +19,21 @@ namespace ClaudeStatus.Overlay.UI;
 /// i wypycha wynik do okna warstwowego.
 ///
 /// Widget ma trzy poziomy (<see cref="WidgetStage"/>): brzeg (domyślny),
-/// pasek (podgląd po najechaniu, gdy włączone w menu) i panel (po kliknięciu -
+/// pasek (podgląd po najechaniu albo na stałe, zależnie od menu) i panel (po kliknięciu -
 /// zostaje otwarty, dopóki nie kliknie się ponownie). Każdy poziom przenika
 /// niezależnie (własny fade), a kształt powłoki liczy i animuje sam
 /// <see cref="WidgetRenderer"/> na podstawie tego, do którego poziomu aktualnie
 /// zmierzamy.
 ///
 /// Pętla klatek jest oszczędna: przy ciągłej animacji (morfing, obrót łuku,
-/// miganie, dojazd pasków) tyka ~64 razy na sekundę; poza tym tylko sonduje
+/// miganie, dojazd pasków) idzie w rytmie kompozytora (<see cref="FramePacer"/>),
+/// czyli dokładnie tyle klatek, ile ekran zdąży pokazać; poza tym tylko sonduje
 /// kursor, a rysuje dopiero, gdy coś się faktycznie zmieniło (sekunda zegara -
 /// tylko gdy widoczny jest jakikolwiek tekst z wiekiem, nowe dane, wiersz pod
 /// kursorem).
 /// </summary>
 public sealed class OverlayForm : LayeredWindow, IOverlayCommands
 {
-    private const int ActiveFrameMs = 15;
     private const int IdleFrameMs = 50;
     private const int DragThresholdPx = 3;
 
@@ -46,22 +48,28 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly FadeAnimation _restFade = new(Design.RestFadeMs, startVisible: true);
     private readonly FadeAnimation _slimFade = new(Design.SlimFadeMs);
-    private readonly FadeAnimation _panelFade = new(Design.PanelFadeMs);
     private readonly MeterAnimation _meters = new();
     private readonly StateChangeTracker _transitions = new();
     private readonly StateSoundPlayer _sounds = new();
-    private readonly System.Windows.Forms.Timer _timer = new();
+    private readonly FramePacer _pacer;
     private readonly OverlayMenu _menu;
     private readonly WidgetRenderer _renderer;
 
+    /// <summary>Szkło pod widgetem; <c>null</c>, gdy system go nie dał - wtedy powłoka zostaje nieprzezroczysta.</summary>
+    private readonly GlassWindow? _glass;
+
     private WidgetStage _stage = WidgetStage.Rest;
+
     private double _stageChangedAtMs = double.NegativeInfinity;
+
+    // Rozmowa: od kiedy wchodzi (jej wejście liczy się tym samym zegarem, co pastylka).
+    private bool _companionVisible;
+    private double _companionShownAtMs = double.NegativeInfinity;
+
     private SessionSnapshot _snapshot = SessionSnapshot.Empty;
     private Size _contentSize;
-    private int _hoverRow = -1;
-    private bool _hoverRefresh;
+
     private (double AtMs, DateTime? FetchedAt)? _usageRefresh;
-    private bool _hoverUpdate;
     private UpdatePhase _updatePhase;
     private double _updateProgress = -1;
     private UpdateBanner? _updateBanner;
@@ -77,6 +85,7 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     }
     private double _lastFrameMs;
     private long _lastSecond = -1;
+    private bool _trackingLeave;
     private bool _dirty = true;
     private DragState? _drag;
 
@@ -111,8 +120,14 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         _menu = new OverlayMenu(config, this);
         ContextMenuStrip = _menu;
 
-        _timer.Interval = IdleFrameMs;
-        _timer.Tick += (_, _) => SafeFrame();
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            var glass = new GlassWindow();
+            _glass = glass.Available ? glass : null;
+            if (_glass is null) glass.Dispose();
+        }
+
+        _pacer = new FramePacer(this, SafeFrame, IdleFrameMs);
     }
 
     // ------------------------------------------------------------ cykl życia
@@ -131,7 +146,7 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         _meters.Snap(VisibleUsage());
         _lastFrameMs = _clock.Elapsed.TotalMilliseconds;
         SafeFrame();
-        _timer.Start();
+        _pacer.Start();
     }
 
     /// <summary>
@@ -142,13 +157,27 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        if (_stage != WidgetStage.Panel || _menu.Visible) return;
-        SetStage(_config.Hover && CursorInsideContent() ? WidgetStage.Slim : WidgetStage.Rest, _clock.Elapsed.TotalMilliseconds);
+        if (!_companionVisible || _menu.Visible) return;
+
+        // Rozmowa i pastylka są jedną całością, więc klik z jednej w drugą nie może
+        // jej zamykać. Decyzja zapada dopiero, gdy wiadomo, co przejęło pierwszy
+        // plan - w chwili tego zdarzenia system jeszcze tego nie ustawił.
+        if (UnitHasFocus is { } hasFocus)
+        {
+            BeginInvoke(() =>
+            {
+                if (hasFocus()) return;
+                ClosePanel();
+            });
+            return;
+        }
+
+        ClosePanel();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _timer.Stop();
+        _pacer.Stop();
         if (_config.Anchor == WidgetAnchor.Free) RememberFreePosition();
         _configStore.Save(_config);
         base.OnFormClosing(e);
@@ -158,7 +187,7 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     {
         if (disposing)
         {
-            _timer.Dispose();
+            _pacer.Dispose();
             _menu.Dispose();
             _renderer.Dispose();
             _installer.Dispose();
@@ -197,29 +226,6 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         var summary = SessionSummary.From(_snapshot, wall);
         var vertical = _config.Anchor.IsMiddle();
 
-        var panelInteractive = _stage == WidgetStage.Panel && _panelFade.Value > 0.99f;
-        var cursor = CursorInContent();
-        var hover = panelInteractive ? _renderer.RowIndexAt(cursor, _snapshot.Sessions.Count) : -1;
-        if (hover != _hoverRow)
-        {
-            _hoverRow = hover;
-            _dirty = true;
-        }
-
-        var hoverRefresh = panelInteractive && _renderer.RefreshButtonHit(cursor);
-        if (hoverRefresh != _hoverRefresh)
-        {
-            _hoverRefresh = hoverRefresh;
-            _dirty = true;
-        }
-
-        var hoverUpdate = panelInteractive && _renderer.UpdateRowHit(cursor);
-        if (hoverUpdate != _hoverUpdate)
-        {
-            _hoverUpdate = hoverUpdate;
-            _dirty = true;
-        }
-
         var refreshing = UsageRefreshPending(now, usage);
 
         _updates.Poll(wall);
@@ -228,17 +234,37 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         {
             _updateBanner = banner;
             _dirty = true;
+
+            // Pasek o nowej wersji stał kiedyś na dole panelu. Panelu nie ma,
+            // więc niesie go rozmowa - razem z postępem pobierania.
+            UpdateBannerChanged?.Invoke(banner);
         }
 
         // stany migające zawsze wygrywają priorytetem sortowania sesji (zobacz
         // SessionInfo.DisplayOrder), więc jeśli KTOKOLWIEK potrzebuje migania,
         // to i tak jest na szczycie - wystarczy sprawdzić styl podsumowania
         var shapeAnimating = now - _stageChangedAtMs < Design.MorphMs;
-        var continuous = shapeAnimating || _restFade.IsAnimating || _slimFade.IsAnimating || _panelFade.IsAnimating
-            || _meters.IsAnimating || refreshing || summary.Style.Glyph is Glyph.Spin or Glyph.Blink;
+        // Ruch, który widać: morfing kształtu, przenikanie poziomów, mierniki.
+        // Rozmowa nie jest tu liczona - od kiedy nie stoi obok panelu, prowadzi
+        // swój wjazd i zjazd sama, na własnym zegarze.
+        var moving = shapeAnimating
+            || _restFade.IsAnimating || _slimFade.IsAnimating
+            || _meters.IsAnimating || refreshing;
 
-        // wiek sesji pokazuje tylko pasek/panel - w samym brzegu nie ma po co odświeżać co sekundę
-        var textVisible = _slimFade.Value > 0.001f || _panelFade.Value > 0.001f;
+        // Oddech znacznika stanu - "pracuje" pulsuje, "czeka"/"błąd" miga. Trwa bez
+        // końca, dopóki sesja jest w tym stanie, i to on, a nie przejścia, decyduje
+        // o rachunku za procesor. Dostaje więc własny, rzadszy rytm: na kilku
+        // pikselach nikt nie odróżni 30 klatek od 83.
+        //
+        // Miganie było kiedyś falą prostokątną i dało się je prowadzić zdarzeniem -
+        // dwa przeskoki na sekundę zamiast rytmu. Wyglądało jednak jak mrugająca
+        // plama, więc jest teraz płynne i musi mieć klatki jak pulsowanie.
+        var breathing = summary.Style.Glyph is Glyph.Spin or Glyph.Blink;
+
+        var continuous = moving || breathing;
+
+        // wiek sesji pokazuje tylko pasek - w samym brzegu nie ma po co odświeżać co sekundę
+        var textVisible = _slimFade.Value > 0.001f;
         var second = wall.Ticks / TimeSpan.TicksPerSecond;
         var secondChanged = textVisible && second != _lastSecond;
         if (secondChanged) _lastSecond = second;
@@ -254,44 +280,46 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
                 Summary: summary,
                 Usage: usage,
                 Meters: _meters.Values,
-                HoverRow: _hoverRow,
-                HoverRefresh: _hoverRefresh,
                 UsageRefreshing: refreshing,
-                Update: _updateBanner,
-                HoverUpdate: _hoverUpdate,
                 TargetStage: _stage,
                 Edge: WidgetPlacement.EdgeOf(_config.Anchor, _config.Detached),
                 Vertical: vertical,
                 RestAlpha: _restFade.Value,
-                SlimAlpha: _slimFade.Value,
-                PanelAlpha: _panelFade.Value,
-                PanelScale: (float)Design.PanelScaleFrom + (float)(1 - Design.PanelScaleFrom) * _panelFade.Value));
+                SlimAlpha: _slimFade.Value)
+            {
+                Glass = _glass is { Available: true },
+            });
         }
 
-        var interval = continuous ? ActiveFrameMs : IdleFrameMs;
-        if (_timer.Interval != interval) _timer.Interval = interval;
+        _pacer.MinIntervalMs = moving ? FramePacer.FullRateMs : FramePacer.CalmRateMs;
+        _pacer.Active = continuous;
     }
 
     /// <summary>
-    /// Najechanie kursorem pokazuje pasek (o ile włączone w menu); panel, raz
-    /// otwarty kliknięciem, zostaje otwarty niezależnie od kursora - zamyka go
-    /// dopiero kolejny klik.
+    /// Najechanie kursorem pokazuje pasek (o ile włączone w menu). Przeciąganie
+    /// i otwarte menu zamrażają poziom, żeby pastylka nie morfowała pod ręką.
     /// </summary>
     private void UpdateStage(double now)
     {
-        if (_stage != WidgetStage.Panel && _drag is null && !_menu.Visible)
+        if (_drag is null && !_menu.Visible)
         {
-            var wantSlim = _config.Hover && CursorInsideContent();
-            SetStage(wantSlim ? WidgetStage.Slim : WidgetStage.Rest, now);
+            SetStage(IdleStage(), now);
         }
 
         _restFade.SetVisible(_stage == WidgetStage.Rest, now);
         _slimFade.SetVisible(_stage == WidgetStage.Slim, now);
-        _panelFade.SetVisible(_stage == WidgetStage.Panel, now);
         _restFade.Update(now);
         _slimFade.Update(now);
-        _panelFade.Update(now);
     }
+
+    /// <summary>
+    /// Poziom poza panelem: pasek, gdy pastylka ma stać rozwinięta na stałe albo
+    /// kursor na niej stoi (przy rozwijaniu po najechaniu) - w przeciwnym razie brzeg.
+    /// </summary>
+    private WidgetStage IdleStage()
+        => _config.AlwaysExpanded || (_config.Hover && CursorInsideContent())
+            ? WidgetStage.Slim
+            : WidgetStage.Rest;
 
     private void SetStage(WidgetStage stage, double now)
     {
@@ -305,6 +333,7 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     {
         var rendered = _renderer.Render(frame);
         var margin = rendered.Margin;
+        var glass = _glass;
         _contentSize = rendered.ContentSize;
 
         Point? windowLocation = null;
@@ -317,6 +346,16 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
 
         ContentBounds = new Rectangle(margin, margin, _contentSize.Width, _contentSize.Height);
         Push(rendered.Surface, windowLocation);
+
+        // Szkło staje dokładnie pod kształtem widgetu - rozmiar i promień bierze
+        // z tej samej klatki, więc jedzie razem z morfingiem.
+        if (glass is { Available: true })
+        {
+            var origin = windowLocation ?? Location;
+            glass.Follow(
+                new Rectangle(origin.X + margin, origin.Y + margin, _contentSize.Width, _contentSize.Height),
+                frame.Edge, Handle);
+        }
     }
 
     private void SyncScale()
@@ -462,6 +501,20 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
 
     // -------------------------------------------------------------------- mysz
 
+    protected override void WndProc(ref Message m)
+    {
+        // Kursor zjechał z pastylki. Bez tego o zjeździe nie dowiedzielibyśmy się
+        // wcale - WM_MOUSEMOVE po prostu przestaje przychodzić - i zwinięcie
+        // czekałoby na najbliższe tyknięcie pętli spoczynkowej.
+        if (m.Msg == WM_MOUSELEAVE)
+        {
+            _trackingLeave = false;
+            _pacer.Nudge();
+        }
+
+        base.WndProc(ref m);
+    }
+
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
@@ -469,9 +522,31 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         _drag = new DragState { CursorOrigin = Cursor.Position, WindowOrigin = ScreenOrigin };
     }
 
+    /// <summary>
+    /// Najechanie i zjechanie kursorem obsługujemy zdarzeniem, a nie samym
+    /// odpytywaniem w klatce: pętla spoczynkowa tyka co 50 ms, więc pastylka
+    /// ociągała się z reakcją o nawet pół dziesiątej sekundy. Odpytywanie
+    /// (<see cref="IdleStage"/>) zostaje jako siatka bezpieczeństwa i to ono dalej
+    /// rozstrzyga - gdyby <c>WM_MOUSELEAVE</c> przepadło, pastylka zwinie się
+    /// najpóźniej przy następnym tyknięciu, zamiast zostać rozwinięta na zawsze.
+    /// </summary>
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+
+        if (!_trackingLeave)
+        {
+            var track = new TRACKMOUSEEVENT
+            {
+                cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(),
+                dwFlags = TME_LEAVE,
+                hwndTrack = Handle,
+            };
+            _trackingLeave = TrackMouseEvent(ref track);
+        }
+
+        _pacer.Nudge();
+
         if (_drag is null) return;
 
         var p = Cursor.Position;
@@ -510,41 +585,112 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     }
 
     /// <summary>
+    /// Pokaż albo schowaj okno rozmowy. Panel zachowuje się jak dotąd - zjeżdża
+    /// z pastylki - a rozmowa dostawia się obok niego. Puste = zachowanie sprzed
+    /// asystenta, sam panel.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Action<bool>? AssistantVisibility { get; set; }
+
+    /// <summary>
+    /// Czy pierwszoplanowe okno należy jeszcze do całości panel + rozmowa.
+    /// Bez tego klik w rozmowę zwijałby panel, przy którym ona stoi.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Func<bool>? UnitHasFocus { get; set; }
+
+    /// <summary>
+    /// Gdzie stanęłaby treść tego rozmiaru przy bieżącej kotwicy - tym samym
+    /// rachunkiem, którym ustawia się sama pastylka. Z tego korzysta okno rozmowy:
+    /// wyrasta dokładnie tam, gdzie kiedyś rozwijał się panel.
+    /// </summary>
+    public Rectangle PlaceContent(Size size)
+    {
+        var origin = WidgetPlacement.ContentOrigin(_config.Anchor, _config.Detached,
+            CurrentWorkArea(_renderer.Margin), size, _renderer.Scale, new Point(_config.X, _config.Y));
+        return new Rectangle(origin, size);
+    }
+
+    /// <summary>
+    /// Prostokąt treści pastylki na ekranie, taki, jaki jest w tej chwili - z tego,
+    /// co widać, wyrasta dymek z odpowiedzią, niezależnie od poziomu pastylki.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Rectangle ContentScreenBounds
+    {
+        get
+        {
+            var origin = ScreenOrigin;
+            return new Rectangle(
+                origin.X + ContentBounds.X, origin.Y + ContentBounds.Y,
+                ContentBounds.Width, ContentBounds.Height);
+        }
+    }
+
+    /// <summary>Zwija rozmowę - wołane też przez nią samą, gdy fokus wyszedł poza całość.</summary>
+    public void ClosePanel()
+    {
+        if (!_companionVisible) return;
+        ShowCompanion(false, _clock.Elapsed.TotalMilliseconds);
+    }
+
+    /// <summary>
+    /// Pokazuje albo chowa rozmowę - i tylko tędy, żeby stan pastylki i widoczność
+    /// okna nigdy się nie rozjechały. Samą animację wjazdu i zjazdu prowadzi
+    /// rozmowa, na własnym zegarze.
+    /// </summary>
+    private void ShowCompanion(bool visible, double now)
+    {
+        if (visible && !_companionVisible)
+        {
+            _companionShownAtMs = now;
+            _dirty = true;
+        }
+
+        _companionVisible = visible;
+        AssistantVisibility?.Invoke(visible);
+    }
+
+    /// <summary>
     /// Klik w wierszu panelu aktywuje edytor, klik w kołową strzałkę odświeża limity,
-    /// klik gdziekolwiek indziej przełącza panel.
+    /// klik gdziekolwiek indziej otwiera asystenta (albo panel, gdy asystenta nie ma).
+    /// </summary>
+    /// <summary>
+    /// Klik otwiera rozmowę, a drugi ją zamyka. Panelu z listą sesji już nie ma:
+    /// limity przeniosły się do nagłówka rozmowy, a stan najważniejszej sesji
+    /// pastylka pokazuje sama - pierścieniem i kolorem.
     /// </summary>
     private void HandleClick()
     {
         var now = _clock.Elapsed.TotalMilliseconds;
+        ShowCompanion(!_companionVisible, now);
+    }
 
-        if (_stage == WidgetStage.Panel)
-        {
-            if (_renderer.RefreshButtonHit(CursorInContent()))
-            {
-                RefreshUsageNow(now);
-                return;
-            }
+    /// <summary>
+    /// Zapamiętuje, czy rozmowa ma stać obok panelu. To preferencja, a nie stan
+    /// jednej sesji, więc ląduje w konfiguracji od razu po kliknięciu.
+    /// </summary>
+    public void SetAssistantExpanded(bool expanded)
+    {
+        if (_config.AssistantExpanded == expanded) return;
+        _config.AssistantExpanded = expanded;
+        _configStore.Save(_config);
+        _dirty = true;
+    }
 
-            if (_renderer.UpdateRowHit(CursorInContent()) && (_updateBanner?.Actionable ?? false))
-            {
-                if (_updatePhase == UpdatePhase.Failed) _updatePhase = UpdatePhase.Idle;
-                StartUpdate();
-                return;
-            }
+    /// <summary>Model asystenta wybrany w nagłówku rozmowy - też preferencja, więc od razu na dysk.</summary>
+    public void SetAssistantModel(string? model)
+    {
+        if (_config.AssistantModel == model) return;
+        _config.AssistantModel = model;
+        _configStore.Save(_config);
+    }
 
-            var row = _renderer.RowIndexAt(CursorInContent(), _snapshot.Sessions.Count);
-            if (row >= 0)
-            {
-                EditorActivator.Activate(_snapshot.Sessions[row], Handle);
-                return;
-            }
-            // kursor mógł zostać na widgecie - jeśli najechanie jest włączone, od razu pokaż podgląd
-            SetStage(_config.Hover && CursorInsideContent() ? WidgetStage.Slim : WidgetStage.Rest, now);
-        }
-        else
-        {
-            SetStage(WidgetStage.Panel, now);
-        }
+    /// <summary>Otwiera rozmowę - i skrót klawiszowy, i klik w pastylkę prowadzą tutaj.</summary>
+    public void OpenPanelWithAssistant()
+    {
+        SetAssistantExpanded(true);
+        ShowCompanion(true, _clock.Elapsed.TotalMilliseconds);
     }
 
     private void RememberFreePosition()
@@ -563,7 +709,9 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         _monitor.UsageEnabled = _config.Usage;
         _monitor.UsageInterval = _config.UsageInterval;
         _updates.Enabled = _config.Updates;
-        if (!_config.Hover) SetStage(WidgetStage.Rest, _clock.Elapsed.TotalMilliseconds);
+        // menu jest jeszcze na wierzchu, więc UpdateStage stoi - poziom trzeba przestawić tutaj,
+        // żeby przełącznik zadziałał od razu, a nie dopiero po zamknięciu menu
+        SetStage(IdleStage(), _clock.Elapsed.TotalMilliseconds);
         _meters.Snap(VisibleUsage());
         _configStore.Save(_config);
         _dirty = true;
@@ -589,7 +737,18 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
         _dirty = true;
     }
 
-    /// <summary>Menu: to samo, co klik w pasek aktualizacji na dole panelu.</summary>
+    /// <summary>
+    /// Powiadomienie o nowej wersji dla rozmowy - z tekstem i postępem pobierania.
+    /// <c>null</c> znaczy: nie ma czego pokazywać.
+    /// </summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Action<UpdateBanner?>? UpdateBannerChanged { get; set; }
+
+    /// <summary>Bieżące powiadomienie - rozmowa pyta o nie, gdy się otwiera.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public UpdateBanner? CurrentUpdateBanner => _updateBanner;
+
+    /// <summary>Menu i wiersz w stopce rozmowy prowadzą tutaj.</summary>
     public void InstallUpdate()
     {
         if (_updatePhase == UpdatePhase.Failed) _updatePhase = UpdatePhase.Idle;
@@ -600,10 +759,12 @@ public sealed class OverlayForm : LayeredWindow, IOverlayCommands
     {
         foreach (var session in _snapshot.Sessions)
         {
-            if (session.State.IsFinished()) _store.TryDelete(session.FilePath);
+            // Sesja bez pliku (asystent) żyje w pamięci nakładki - nie ma czego kasować.
+            if (session.State.IsFinished() && session.FilePath.Length > 0) _store.TryDelete(session.FilePath);
         }
         _monitor.Refresh();
     }
 
     public void Exit() => Close();
 }
+

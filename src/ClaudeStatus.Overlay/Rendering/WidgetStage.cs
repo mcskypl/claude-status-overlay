@@ -1,19 +1,19 @@
 namespace ClaudeStatus.Overlay.Rendering;
 
 /// <summary>
-/// Trzy poziomy widgetu, od najmniej do najbardziej natarczywego:
+/// Dwa poziomy widgetu, od najmniej do najbardziej natarczywego:
 /// <list type="bullet">
 ///   <item><see cref="Rest"/> - brzeg: cienka linia zawsze widoczna, tylko
 ///   proporcje limitów i barwny znacznik stanu na środku.</item>
-///   <item><see cref="Slim"/> - pasek: podgląd po najechaniu kursorem -
-///   pierścień, wartość (czas albo nazwa stanu) i oba mierniki w linii.</item>
-///   <item><see cref="Panel"/> - pełna lista sesji po kliknięciu; zostaje
-///   otwarty, dopóki nie kliknie się ponownie (najazd/zjazd kursorem go nie rusza).</item>
+///   <item><see cref="Slim"/> - pasek: podgląd po najechaniu kursorem (albo na
+///   stałe, gdy tak ustawione w menu) - pierścień, wartość (czas albo nazwa
+///   stanu) i oba mierniki w linii.</item>
 /// </list>
+/// Trzeciego poziomu - panelu z listą sesji - już nie ma: klik otwiera okno
+/// rozmowy, które niesie limity w nagłówku, a stan sesji pokazuje sama pastylka.
 /// </summary>
 public enum WidgetStage
 {
     Rest,
     Slim,
-    Panel,
 }

@@ -5,6 +5,7 @@ using ClaudeStatus.Core.Sessions;
 using ClaudeStatus.Core.Update;
 using ClaudeStatus.Core.Usage;
 using ClaudeStatus.Overlay.App;
+using ClaudeStatus.Overlay.Assistant;
 using ClaudeStatus.Overlay.UI;
 
 namespace ClaudeStatus.Overlay;
@@ -47,6 +48,10 @@ internal static class Program
         var store = new SessionStatusStore(ClaudePaths.StatusDir);
         store.EnsureDirectory();
 
+        // Wpisy po wcześniejszych sesjach asystenta - z czasów, gdy pisał je hook.
+        // Od teraz asystent melduje się nakładce wprost, więc żadnych nie zostawia.
+        AssistantSession.PurgeStale(store);
+
         var reader = new SessionReader(store, new LiveStateResolver(ClaudePaths.ProjectsDir, ClaudePaths.SessionsDir));
 
         // limity: API Anthropic tokenem Claude Code, cache z ~/.claude.json jako fallback
@@ -70,6 +75,45 @@ internal static class Program
         updates.Failed += ex => log.Error("update", ex);
 
         using var form = new OverlayForm(config, configStore, store, monitor, updates, log);
+
+        // Asystent: rozmowa dostawiana do panelu pastylki. Osobne okno w tej samej
+        // pętli komunikatów, dzielące z pastylką monitor sesji - dzięki temu nie ma
+        // drugiego odpytywania dysku ani drugiego ruchu do API limitów.
+        using var assistant = new AssistantForm(
+            config, monitor, log, form.PlaceContent, () => form.ContentScreenBounds);
+
+        // Panel i rozmowa są jedną całością: klik w pastylkę rozwija oba, klik poza
+        // nimi zwija oba, a klik z jednego w drugie nie zamyka niczego.
+        // Dymek z gotową odpowiedzią - osobne, malutkie okno pod pastylką.
+        using var toast = new AnswerToastForm(config, log, () => form.ContentScreenBounds);
+        assistant.AnswerReady = toast.Show;
+        toast.OpenRequested = form.OpenPanelWithAssistant;
+
+        form.AssistantVisibility = visible =>
+        {
+            if (visible)
+            {
+                // Rozmowa na wierzchu czyni dymek zbędnym - pokazuje to samo.
+                toast.HideToast();
+                assistant.ShowAssistant();
+            }
+            else
+            {
+                assistant.HideAssistant();
+            }
+        };
+        form.UnitHasFocus = assistant.ForegroundIsOurs;
+
+        // Powiadomienie o nowej wersji stało kiedyś na dole panelu pastylki.
+        form.UpdateBannerChanged = assistant.ShowUpdate;
+        assistant.InstallUpdateRequested = form.InstallUpdate;
+        assistant.ShowUpdate(form.CurrentUpdateBanner);
+        assistant.PanelOpenRequested = form.OpenPanelWithAssistant;
+        assistant.PanelCloseRequested = form.ClosePanel;
+        assistant.ExpandedChanged = form.SetAssistantExpanded;
+        // Silnik woła to z wątku okna asystenta, a konfigurację trzyma pastylka.
+        assistant.ModelChanged = model => form.BeginInvoke(() => form.SetAssistantModel(model));
+
         instance.ExitRequested += () =>
         {
             try

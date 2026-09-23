@@ -23,9 +23,28 @@ public sealed record SlimLayout(float MainLen, float ContentLen, bool Vertical, 
 /// </summary>
 public sealed class SlimRenderer : IDisposable
 {
-    private readonly LayerBitmap _layer = new();
+    private readonly CachedLayer _layer = new();
 
-    public SlimLayout Measure(Canvas measure, FontSet fonts, FrameInput frame)
+    private FrameInput? _layoutKey;
+    private SlimLayout? _layout;
+
+    /// <summary>
+    /// Układ paska. Mierzenie tekstu jest tu najdroższą rzeczą, a wynik zależy
+    /// wyłącznie od treści - ta sama zawartość daje tę samą długość, niezależnie
+    /// od tego, na którym etapie morfingu jesteśmy. Stąd ten sam klucz, co przy
+    /// warstwie.
+    /// </summary>
+    public SlimLayout Measure(Canvas measure, FontSet fonts, FrameInput frame, FrameInput key)
+    {
+        if (_layout is { } ready && _layoutKey == key) return ready;
+
+        var layout = MeasureCore(measure, fonts, frame);
+        _layoutKey = key;
+        _layout = layout;
+        return layout;
+    }
+
+    private static SlimLayout MeasureCore(Canvas measure, FontSet fonts, FrameInput frame)
     {
         var s = fonts.Scale;
         var showMeters = frame.Usage?.HasAnyWindow ?? false;
@@ -80,20 +99,34 @@ public sealed class SlimRenderer : IDisposable
         return y + s.Px(Design.SlimPadX);
     }
 
-    public Bitmap Render(SlimLayout layout, FontSet fonts, ResourceCache resources, FrameInput frame)
+    public Bitmap Render(SlimLayout layout, FontSet fonts, ResourceCache resources, FrameInput frame, FrameInput key)
     {
-        var s = fonts.Scale;
-        var thickness = s.PxInt(Design.SlimH);
+        var thickness = fonts.Scale.PxInt(Design.SlimH);
         var w = layout.Vertical ? thickness : (int)Math.Ceiling(layout.MainLen);
         var h = layout.Vertical ? (int)Math.Ceiling(layout.MainLen) : thickness;
 
-        var bitmap = _layer.Ensure(w, h, PixelFormat.Format32bppRgb);
-        using var c = Canvas.ForLayer(bitmap, resources, Palette.Black);
+        // Warstwa nie zawiera już niczego, co zmienia się z samego zegara - pierścień
+        // rysuje powłoka (zobacz DrawRing). Dzięki temu pulsująca sesja nie zmusza do
+        // przemalowania tekstu i mierników w każdej klatce.
+        if (_layer.BeginDraw(w, h, PixelFormat.Format32bppRgb, Palette.Black, resources, key, AnimationPhase.Still)
+            is not { } canvas)
+        {
+            return _layer.Current;
+        }
+
+        using var c = canvas;
 
         if (layout.Vertical) RenderVertical(c, fonts, frame, w, h);
         else RenderHorizontal(c, fonts, frame, w, h, layout.ContentLen);
 
-        return bitmap;
+        return _layer.Current;
+    }
+
+    /// <summary>Zmiana DPI - fonty i zasoby są inne, więc warstwa i układ muszą powstać od nowa.</summary>
+    public void Invalidate()
+    {
+        _layer.Invalidate();
+        _layout = null;
     }
 
     private static void RenderHorizontal(Canvas c, FontSet fonts, FrameInput frame, int w, int h, float contentLen)
@@ -104,9 +137,7 @@ public sealed class SlimRenderer : IDisposable
         var style = summary.Style;
 
         // treść wyśrodkowana w pasku wymuszonym na szerokość panelu, nie przyklejona do lewej
-        var x = Math.Max((w - contentLen) / 2f, s.Px(Design.SlimPadX));
-        DrawRing(c, s, frame, style, x + s.Px(Design.SlimRing) / 2, cy);
-        x += s.Px(Design.SlimRing);
+        var x = Math.Max((w - contentLen) / 2f, s.Px(Design.SlimPadX)) + s.Px(Design.SlimRing);
 
         var value = style.ShortValue(frame.Now - (summary.Top?.Timestamp ?? frame.Now));
         if (value.Length > 0)
@@ -162,11 +193,8 @@ public sealed class SlimRenderer : IDisposable
     {
         var s = fonts.Scale;
         var cx = w / 2f;
-        var style = frame.Summary.Style;
 
-        var y = s.Px(Design.SlimPadX);
-        DrawRing(c, s, frame, style, cx, y + s.Px(Design.SlimRing) / 2);
-        y += s.Px(Design.SlimRing);
+        var y = s.Px(Design.SlimPadX) + s.Px(Design.SlimRing);
 
         if (frame.Usage is { HasAnyWindow: true } usage)
         {
@@ -200,13 +228,40 @@ public sealed class SlimRenderer : IDisposable
         }
     }
 
-    /// <summary>Pionowy pasek limitu rysowany jak <see cref="Canvas.Bar"/>, tylko wzdłuż osi Y.</summary>
-    private static void DrawRing(Canvas c, DpiScale s, FrameInput frame, StateStyle style, float cx, float cy)
+    /// <summary>Środek pierścienia stanu we współrzędnych warstwy.</summary>
+    private static PointF RingCenter(SlimLayout layout, DpiScale s)
     {
+        var thickness = s.PxInt(Design.SlimH);
+        if (layout.Vertical)
+        {
+            return new PointF(thickness / 2f, s.Px(Design.SlimPadX) + s.Px(Design.SlimRing) / 2);
+        }
+
+        var w = (int)Math.Ceiling(layout.MainLen);
+        var x = Math.Max((w - layout.ContentLen) / 2f, s.Px(Design.SlimPadX));
+        return new PointF(x + s.Px(Design.SlimRing) / 2, thickness / 2f);
+    }
+
+    /// <summary>
+    /// Pierścień stanu - rysowany na powłoce, tuż po nałożeniu warstwy, a nie
+    /// w samej warstwie.
+    /// </summary>
+    /// <remarks>
+    /// Przy "pracuje" pierścień kręci się i pulsuje, czyli zmienia się w każdej
+    /// klatce. Gdyby siedział w warstwie, wymuszałby przemalowanie całej reszty -
+    /// tekstu, mierników, procentów - mimo że one stoją w miejscu. Osobno rysowany
+    /// kosztuje jeden łuk, a warstwa zostaje w cache.
+    /// </remarks>
+    public static void DrawRing(Canvas c, DpiScale s, FrameInput frame, SlimLayout layout,
+        float originX, float originY, float alpha)
+    {
+        var style = frame.Summary.Style;
+        var centre = RingCenter(layout, s);
         var sweep = StateAnimation.SweepFor(style.Glyph);
         var start = style.Glyph == Glyph.Spin ? StateAnimation.SpinStartDeg(frame.TimeMs) : 0f;
-        var alpha = StateAnimation.RingAlpha(style, frame.TimeMs);
-        c.Ring(cx, cy, s.Px(Design.SlimRing), s.Px(Design.SlimRingHole), style.Color, start, sweep, alpha);
+        var ringAlpha = StateAnimation.RingAlpha(style, frame.TimeMs) * alpha;
+        c.Ring(originX + centre.X, originY + centre.Y, s.Px(Design.SlimRing), s.Px(Design.SlimRingHole),
+            style.Color, start, sweep, ringAlpha);
     }
 
     public void Dispose() => _layer.Dispose();

@@ -22,6 +22,25 @@ public sealed partial class HookProcessor
     private const string FallbackProject = "Claude";
     private const int MaxNoteLength = 120;
 
+    /// <summary>
+    /// Zmienna środowiskowa wyciszająca hook dla sesji prowadzonych przez samą
+    /// nakładkę (asystent). Ustawiona na "off" sprawia, że hook nie zapisuje nic.
+    /// </summary>
+    /// <remarks>
+    /// Asystent jest zwykłą sesją Claude Code, więc odpala te same hooki - ale
+    /// jego stan nakładka zna z pierwszej ręki. Plik z hooka byłby wtedy drugim,
+    /// gorszym źródłem prawdy: hook widzi prośbę o zgodę, natomiast zdarzenia
+    /// "zgoda udzielona" Claude Code nie ma, a decyzja zapada w panelu, nie w
+    /// terminalu - więc stan "czeka na Ciebie" wisiałby do końca doby.
+    /// </remarks>
+    public const string SilenceVariable = "CLAUDE_STATUS_HOOK";
+
+    public const string SilenceValue = "off";
+
+    /// <summary>Czy ten proces został wyciszony przez rodzica.</summary>
+    public static bool Silenced => string.Equals(
+        Environment.GetEnvironmentVariable(SilenceVariable), SilenceValue, StringComparison.OrdinalIgnoreCase);
+
     private readonly SessionStatusStore _store;
 
     public HookProcessor(SessionStatusStore store)

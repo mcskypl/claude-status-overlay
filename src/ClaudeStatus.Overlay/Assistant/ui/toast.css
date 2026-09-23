@@ -1,0 +1,223 @@
+/* Dymek „odpowiedź gotowa" - nakladka pokazywana pod pastylka, gdy tura
+   skonczyla sie przy schowanej rozmowie.
+
+   Geometria, typografia i rytm sa z projektu (Nakladka odpowiedzi.dc.html).
+   Kolory ida z tokenow pastylki, nie z palety prototypu: dymek wisi tuz pod
+   pastylka, wiec dwie rozne zielenie i dwie rodziny szarosci widac obok siebie.
+
+   Zero zasobow zewnetrznych - tak jak w oknie rozmowy. */
+
+:root {
+  /* Przyciemnienie karty. Rozmycie tego, co pod oknem, dokłada kompozytor
+     (blur-behind); ten tint jest jedyną warstwą nad nim. Ta sama wartość, co
+     w rozmowie i w powłoce pastylki - jedno szkło w całej nakładce. */
+  --tint: rgba(8, 9, 8, .40);
+
+  --ink-90: rgba(255, 255, 255, .9);
+  --ink-82: rgba(255, 255, 255, .82);
+  --ink-72: rgba(255, 255, 255, .72);
+  --ink-42: rgba(255, 255, 255, .42);
+  --ink-34: rgba(255, 255, 255, .34);
+
+  --ink-30: rgba(255, 255, 255, .3);
+
+  --track: rgba(255, 255, 255, .10);
+  --track-07: rgba(255, 255, 255, .07);
+  --fill-05: rgba(255, 255, 255, .05);
+  --fill-06: rgba(255, 255, 255, .06);
+  --line: rgba(255, 255, 255, .06);
+
+  /* Mocniejsza niz .08 z projektu: na szkle po drugiej stronie krawedzi jest
+     zywy obraz, a nie czern - slabszy kontur gubil ksztalt karty. */
+  --outline: rgba(255, 255, 255, .14);
+
+  --green: oklch(.72 .13 150);
+
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, monospace;
+
+  /* Rogi okna zaokragla DWM, razem z rozmyciem - promienia systemowego nie da
+     sie ustawic, wiec karta trzyma te sama wartosc. Projekt podaje 14 px; to
+     cena za rozmycie zywe zamiast tapety. */
+  --radius: 8px;
+
+  /* Projekt ma tu cubic-bezier(.2,.8,.2,1); bierzemy krzywa pastylki - ta sama
+     rodzina, a dymek wisi tuz pod nia i rusza sie razem z reszta nakladki. */
+  --drop: 280ms cubic-bezier(.22, 1, .36, 1);
+}
+
+* { box-sizing: border-box; }
+
+/* Wysokosc jest `auto`, bo to karta dyktuje rozmiar okna, a nie odwrotnie:
+   host pyta strone o jej wysokosc i dopiero wtedy stawia okno. */
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+
+  /* Przezroczyste: rozmycie tla rysuje DWM (akryl Windows 11) POD oknem, a nie
+     ta strona. `backdrop-filter` nic by tu nie dal - przegladarka nie widzi
+     tego, co jest za jej wlasna powierzchnia. */
+  background: transparent;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--ink-90);
+  cursor: pointer;          /* caly dymek jest klikalny - otwiera rozmowe */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes fadeIn   { from { opacity: 0; } to { opacity: 1; } }
+
+/* ------------------------------------------------------------------ karta */
+
+.card {
+  display: flex;
+  flex-direction: column;
+
+  /* Przyciemnienie z projektu; rozmycie przychodzi z akrylu pod spodem. */
+  background: var(--tint);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius);
+  overflow: hidden;
+
+  /* Ksztalt odsłania host regionem okna; tresc wchodzi przenikaniem. */
+  animation: fadeIn var(--drop) both;
+}
+
+body.closing .card { animation: fadeIn 250ms ease reverse both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card, body.closing .card { animation: none; }
+  .dot { animation: none; }
+}
+
+/* --------------------------------------------------------------- odliczanie */
+
+.progress {
+  height: 2px;
+  flex: none;
+  background: var(--track-07);
+}
+
+.progress-fill {
+  height: 2px;
+  width: 100%;
+  background: var(--green);
+  border-radius: 0 2px 2px 0;
+}
+
+/* ------------------------------------------------------------------ naglowek */
+
+.head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 6px;
+  font-size: 11.5px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+.who { color: var(--ink-90); font-weight: 600; letter-spacing: .01em; }
+.sep { color: var(--ink-34); }
+.what { color: var(--ink-42); }
+.spacer { flex: 1; }
+.countdown { font-family: var(--font-mono); color: var(--ink-34); }
+
+/* -------------------------------------------------------------------- tresc */
+
+.body {
+  flex: none;
+  max-height: 190px;
+  padding: 2px 16px 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-72);
+  text-wrap: pretty;
+  overflow: hidden;
+
+  /* Dluzsza odpowiedz gasnie u dolu zamiast urywac sie w pol litery. */
+  mask-image: linear-gradient(#000 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(#000 72%, transparent 100%);
+}
+
+/* Ten sam parser co w oknie rozmowy, wiec te same klasy - tyle ze ciasniej,
+   bo to zapowiedz wysoka na 190 px, a nie pelna rozmowa. */
+
+.md { display: flex; flex-direction: column; gap: 10px; }
+.md p { margin: 0; }
+.md strong { color: var(--ink-90); font-weight: 600; }
+.md h2 { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ink-90); }
+
+.md code.inline {
+  font: 400 12px var(--font-mono);
+  background: var(--fill-06);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--ink-82);
+}
+
+.md ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.md li { display: flex; gap: 8px; }
+.md li::before { content: '—'; color: var(--ink-30); flex: none; width: 12px; }
+
+.md table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--track);
+  /* Stopien nizej niz karta (8 px), zeby tabela byla w niej, a nie obok niej. */
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12px;
+  width: 100%;
+}
+.md th {
+  padding: 5px 9px;
+  background: var(--fill-05);
+  color: var(--ink-42);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.md td {
+  padding: 5px 9px;
+  border-top: 1px solid var(--track);
+  color: var(--ink-82);
+}
+.md th.num, .md td.num { text-align: right; font-family: var(--font-mono); }
+.md td.num.muted { color: var(--ink-42); }
+
+.md pre {
+  margin: 0;
+  font: 400 12px var(--font-mono);
+  color: var(--ink-82);
+  background: var(--fill-06);
+  border-radius: 4px;
+  padding: 8px 10px;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------- stopka */
+
+.foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--line);
+  font: 400 10.5px var(--font-mono);
+  color: var(--ink-34);
+}
+
+.foot b { font-weight: 400; color: var(--ink-72); }

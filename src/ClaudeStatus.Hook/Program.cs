@@ -34,6 +34,10 @@ internal static class Program
 
     private static int WriteState(CommandLine options)
     {
+        // Sesja prowadzona przez samą nakładkę - jej stan idzie wprost do pastylki,
+        // bez pośrednictwa pliku. Zapis tutaj tylko by go przekłamywał.
+        if (HookProcessor.Silenced) return 0;
+
         try
         {
             var action = HookActions.Parse(options.State);

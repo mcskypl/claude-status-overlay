@@ -8,10 +8,22 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Pakiet WebView2 wnosi obok wariantu WinForms takze ten dla WPF, ktory
+         ciagnie WindowsBase 5.0. Uzywamy wylacznie WinForms, wiec konflikt
+         wersji nie ma jak zaszkodzic - a zasmieca kazda kompilacje. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\ClaudeStatus.Core\ClaudeStatus.Core.csproj" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!-- Widok asystenta: statyczne pliki kopiowane obok exe, mapowane w WebView2
+       jako wirtualny host. Nie sa zasobami osadzonymi, zeby dalo sie je podmienic
+       bez przebudowy i podejrzec w przegladarce przez assistant-bridge/dev-server.mjs. -->
+  <ItemGroup>
+    <None Include="Assistant\ui\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

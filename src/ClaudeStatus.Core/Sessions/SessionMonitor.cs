@@ -22,6 +22,7 @@ public sealed class SessionMonitor : IDisposable
     private volatile bool _stopping;
     private volatile bool _usageEnabled = true;
     private SessionSnapshot _current = SessionSnapshot.Empty;
+    private SessionInfo? _companion;
 
     public SessionMonitor(SessionReader reader, IUsageSource usage, AccountInfoReader account, string watchDirectory, TimeSpan interval)
     {
@@ -46,6 +47,25 @@ public sealed class SessionMonitor : IDisposable
         {
             if (_usageEnabled == value) return;
             _usageEnabled = value;
+            Refresh();
+        }
+    }
+
+    /// <summary>
+    /// Sesja, którą nakładka prowadzi sama (asystent) - dokładana do obrazu obok
+    /// tych czytanych z dysku. Nie ma pliku stanu, bo nie musi: jej stan jest
+    /// znany z pierwszej ręki, więc nie przechodzi przez hook ani przez dysk,
+    /// i znika razem z aplikacją, zamiast zostawać w katalogu na dobę.
+    /// Ustawiane spoza wątku monitora - zapis jest atomowy, a nowy obraz powstaje
+    /// od razu, nie przy najbliższej rundzie.
+    /// </summary>
+    public SessionInfo? Companion
+    {
+        get => Volatile.Read(ref _companion);
+        set
+        {
+            if (ReferenceEquals(Volatile.Read(ref _companion), value)) return;
+            Volatile.Write(ref _companion, value);
             Refresh();
         }
     }
@@ -96,7 +116,8 @@ public sealed class SessionMonitor : IDisposable
                 var now = DateTime.Now;
                 var usage = _usageEnabled ? _usage.Read(now) : UsageSnapshot.Empty;
                 var account = _account.Read(now);
-                var snapshot = new SessionSnapshot(_reader.Read(now), usage, account, now);
+                var snapshot = new SessionSnapshot(
+                    Merge(_reader.Read(now), Volatile.Read(ref _companion)), usage, account, now);
                 Volatile.Write(ref _current, snapshot);
                 Updated?.Invoke(snapshot);
             }
@@ -107,6 +128,18 @@ public sealed class SessionMonitor : IDisposable
 
             _wake.WaitOne(_interval);
         }
+    }
+
+    /// <summary>Sesja z pamięci wchodzi do tego samego porządku, co te z dysku.</summary>
+    private static IReadOnlyList<SessionInfo> Merge(IReadOnlyList<SessionInfo> stored, SessionInfo? companion)
+    {
+        if (companion is null) return stored;
+
+        var all = new List<SessionInfo>(stored.Count + 1);
+        all.AddRange(stored);
+        all.Add(companion);
+        all.Sort(SessionInfo.DisplayOrder);
+        return all;
     }
 
     // FileSystemWatcher to tylko "szturchnięcie" - gdy się nie uda, zostaje

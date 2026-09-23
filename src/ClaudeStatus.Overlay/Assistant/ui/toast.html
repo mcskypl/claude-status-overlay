@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'; img-src data:; connect-src 'none'">
+<title>Odpowiedź gotowa</title>
+<link rel="stylesheet" href="toast.css">
+</head>
+<body>
+
+<div class="card" id="card">
+
+  <!-- Pasek odliczania: kurczy się przez cały czas życia dymka. -->
+  <div class="progress"><div class="progress-fill" id="progress"></div></div>
+
+  <header class="head">
+    <span class="dot"></span>
+    <span class="who">assistant</span>
+    <span class="sep">·</span>
+    <span class="what">odpowiedź gotowa</span>
+    <span class="spacer"></span>
+    <span class="countdown" id="countdown">—</span>
+  </header>
+
+  <!-- Zapowiedź odpowiedzi; dłuższa gaśnie u dołu maską, zamiast się urywać. -->
+  <div class="body" id="body"></div>
+
+  <footer class="foot">
+    <span><b>Klik</b> otwórz sesję</span>
+    <span><b>Esc</b> zamknij</span>
+    <span class="spacer"></span>
+    <span id="hint">auto-ukrycie</span>
+  </footer>
+
+</div>
+
+<script src="markdown.js"></script>
+<script src="toast.js"></script>
+</body>
+</html>

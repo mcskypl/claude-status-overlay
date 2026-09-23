@@ -14,6 +14,9 @@ public readonly record struct CornerRadii(float TopLeft, float TopRight, float B
         BottomRight > 0 ? BottomRight + d : 0,
         BottomLeft > 0 ? BottomLeft + d : 0);
 
+    /// <summary>Promienie przeskalowane - zero zostaje zerem (płaski bok).</summary>
+    public CornerRadii Scale(float k) => new(TopLeft * k, TopRight * k, BottomRight * k, BottomLeft * k);
+
     /// <summary>Klucz do cache - po zaokrągleniu do całych pikseli.</summary>
     public (int, int, int, int) Key => ((int)TopLeft, (int)TopRight, (int)BottomRight, (int)BottomLeft);
 }

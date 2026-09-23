@@ -47,6 +47,48 @@ internal static class NativeMethods
         public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat;
     }
 
+    public const int WM_MOUSELEAVE = 0x02A3;
+    public const uint TME_LEAVE = 0x00000002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TRACKMOUSEEVENT
+    {
+        public uint cbSize;
+        public uint dwFlags;
+        public IntPtr hwndTrack;
+        public uint dwHoverTime;
+    }
+
+    /// <summary>Zamawia <c>WM_MOUSELEAVE</c> - inaczej o zjechaniu kursora nikt nas nie powiadomi.</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+
+    public const uint BI_RGB = 0;
+    public const uint DIB_RGB_COLORS = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth, biHeight;
+        public ushort biPlanes, biBitCount;
+        public uint biCompression, biSizeImage;
+        public int biXPelsPerMeter, biYPelsPerMeter;
+        public uint biClrUsed, biClrImportant;
+    }
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    public static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage,
+        out IntPtr ppvBits, IntPtr hSection, uint offset);
+
+    /// <summary>
+    /// Domyka wsad GDI. Tekst rysujemy przez GDI (TextRenderer), a bity czyta
+    /// potem UpdateLayeredWindow wprost z pamięci DIB - bez tego ostatnie napisy
+    /// mogłyby jeszcze w niej nie być.
+    /// </summary>
+    [DllImport("gdi32.dll")]
+    public static extern bool GdiFlush();
+
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]

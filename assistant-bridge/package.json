@@ -1,0 +1,11 @@
+{
+  "name": "claude-status-assistant-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Most miedzy nakladka (C#) a Claude Agent SDK - linie JSON po stdin/stdout.",
+  "main": "index.mjs",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.278"
+  }
+}

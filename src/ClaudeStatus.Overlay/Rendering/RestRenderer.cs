@@ -13,17 +13,25 @@ namespace ClaudeStatus.Overlay.Rendering;
 /// </summary>
 public sealed class RestRenderer : IDisposable
 {
-    private readonly LayerBitmap _layer = new();
+    private readonly CachedLayer _layer = new();
 
-    public Bitmap Render(FontSet fonts, ResourceCache resources, FrameInput frame)
+    public Bitmap Render(FontSet fonts, ResourceCache resources, FrameInput frame, FrameInput key)
     {
         var s = fonts.Scale;
         var vertical = frame.Vertical;
         var w = s.PxInt(vertical ? Design.RestH : Design.RestW);
         var h = s.PxInt(vertical ? Design.RestW : Design.RestH);
 
-        var bitmap = _layer.Ensure(w, h, PixelFormat.Format32bppRgb);
-        using var c = Canvas.ForLayer(bitmap, resources, Palette.Black);
+        // Warstwa nie zawiera niczego, co zmienia się z samego zegara - migający
+        // znacznik rysuje powłoka (zobacz DrawMarker), więc same paski limitów
+        // zostają w cache nawet wtedy, gdy znacznik pulsuje co klatkę.
+        if (_layer.BeginDraw(w, h, PixelFormat.Format32bppRgb, Palette.Black, resources, key, AnimationPhase.Still)
+            is not { } canvas)
+        {
+            return _layer.Current;
+        }
+
+        using var c = canvas;
 
         var five = frame.Meters.FiveHour ?? (float)(frame.Usage?.FiveHour?.Used ?? 0);
         var seven = frame.Meters.SevenDay ?? (float)(frame.Usage?.SevenDay?.Used ?? 0);
@@ -74,9 +82,11 @@ public sealed class RestRenderer : IDisposable
             }
         }
 
-        DrawMarker(c, s, frame, w, h, vertical);
-        return bitmap;
+        return _layer.Current;
     }
+
+    /// <summary>Zmiana DPI - fonty i zasoby są inne, więc warstwa musi powstać od nowa.</summary>
+    public void Invalidate() => _layer.Invalidate();
 
     /// <summary>
     /// Długość jednego paska limitu: od końca linii do znacznika (z odstępem).
@@ -86,13 +96,19 @@ public sealed class RestRenderer : IDisposable
     private static float BarLen(DpiScale s, float len)
         => Math.Max(0f, (len - s.Px(Design.RestMarkerLen)) / 2f - s.Px(Design.RestMarkerGap));
 
-    /// <summary>Barwny znacznik stanu na środku - jedyny element brzegu, który mówi coś o sesji.</summary>
-    private static void DrawMarker(Canvas c, DpiScale s, FrameInput frame, int w, int h, bool vertical)
+    /// <summary>
+    /// Barwny znacznik stanu na środku - jedyny element brzegu, który mówi coś
+    /// o sesji. Rysowany na powłoce, tuż po nałożeniu warstwy, bo pulsuje i miga:
+    /// w warstwie wymuszałby przemalowanie pasków limitów w każdej klatce, a brzeg
+    /// stoi na ekranie cały dzień.
+    /// </summary>
+    public static void DrawMarker(Canvas c, DpiScale s, FrameInput frame, float originX, float originY,
+        int w, int h, bool vertical, float alpha)
     {
         var style = frame.Summary.Style;
-        var color = style.Color.With(StateAnimation.RingAlpha(style, frame.TimeMs));
+        var color = style.Color.With(StateAnimation.RingAlpha(style, frame.TimeMs) * alpha);
         var (x, y, mw, mh, r) = MarkerRect(s, w, h, vertical);
-        c.FillRounded(color, x, y, mw, mh, r);
+        c.FillRounded(color, originX + x, originY + y, mw, mh, r);
     }
 
     /// <summary>Prostokąt znacznika (środek brzegu) we współrzędnych warstwy brzegu.</summary>
@@ -105,19 +121,26 @@ public sealed class RestRenderer : IDisposable
     }
 
     /// <summary>
-    /// Migająca poświata wokół znacznika - tylko dla stanów "czeka na Ciebie"/"błąd" (te same,
-    /// co migają), żeby dało się je zauważyć kątem oka zanim ktoś sięgnie kursorem po pasek.
-    /// Rysowana na zewnętrznej powłoce (z zapasem cienia), bo sam brzeg jest za cienki (5 px),
-    /// żeby pomieścić rozlewającą się poświatę - gaśnie razem z miganiem znacznika.
+    /// Poświata wokół znacznika - tylko dla stanów "czeka na Ciebie"/"błąd", żeby dało
+    /// się je zauważyć kątem oka, zanim ktoś sięgnie kursorem po pasek. Rysowana na
+    /// zewnętrznej powłoce (z zapasem cienia), bo sam brzeg jest za cienki (5 px),
+    /// żeby ją pomieścić.
     /// </summary>
+    /// <remarks>
+    /// Oddycha razem ze znacznikiem, zamiast pojawiać się i znikać skokowo. Przy
+    /// pięciu pierścieniach co 3 px krycia się sumowały i przy krawędzi ekranu
+    /// robiła się z tego kolorowa bańka wystająca poza pastylkę - stąd teraz
+    /// trzy pierścienie co 2 px, czyli halo szerokie na 6 px zamiast 15.
+    /// </remarks>
     public static void DrawGlow(Canvas c, DpiScale s, FrameInput frame, float ox, float oy, float w, float h)
     {
         var style = frame.Summary.Style;
-        if (style.Glyph != Glyph.Blink || !style.IsBlinkOnAt(frame.TimeMs) || frame.RestAlpha <= 0) return;
+        if (style.Glyph != Glyph.Blink || frame.RestAlpha <= 0) return;
 
         var (x, y, mw, mh, r) = MarkerRect(s, w, h, frame.Vertical);
         var step = s.Px(Design.RestGlowStep);
-        var alpha = Design.RestGlowAlpha * frame.RestAlpha;
+        var alpha = Design.RestGlowAlpha * frame.RestAlpha
+            * StateAnimation.BlinkAlpha(style, frame.TimeMs);
 
         for (var k = Design.RestGlowRings; k >= 1; k--)
         {

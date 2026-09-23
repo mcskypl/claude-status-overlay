@@ -98,19 +98,17 @@ public class LayeredWindow : Form
     /// Podana pozycja jest ustawiana w tym samym wywołaniu - pozycja, rozmiar
     /// i obraz zmieniają się atomowo, więc panel rosnący "w górę" nie skacze.
     /// </summary>
-    public unsafe void Push(Bitmap surface, Point? location, byte opacity = 255)
+    public unsafe void Push(DibSurface surface, Point? location, byte opacity = 255)
     {
         if (!IsHandleCreated) return;
 
+        // Tekst idzie przez GDI, a bity czytamy wprost z pamięci sekcji - trzeba
+        // domknąć wsad, zanim kompozytor po nie sięgnie.
+        GdiFlush();
+
         var screen = GetDC(IntPtr.Zero);
-        var memory = CreateCompatibleDC(screen);
-        var hBitmap = IntPtr.Zero;
-        var previous = IntPtr.Zero;
         try
         {
-            hBitmap = surface.GetHbitmap(Color.FromArgb(0));
-            previous = SelectObject(memory, hBitmap);
-
             var size = new SIZE { cx = surface.Width, cy = surface.Height };
             var source = new POINT();
             var blend = new BLENDFUNCTION
@@ -123,16 +121,10 @@ public class LayeredWindow : Form
 
             var destination = new POINT { x = location?.X ?? 0, y = location?.Y ?? 0 };
             var pptDst = location is null ? IntPtr.Zero : (IntPtr)(&destination);
-            UpdateLayeredWindow(Handle, screen, pptDst, ref size, memory, ref source, 0, ref blend, ULW_ALPHA);
+            UpdateLayeredWindow(Handle, screen, pptDst, ref size, surface.Dc, ref source, 0, ref blend, ULW_ALPHA);
         }
         finally
         {
-            if (hBitmap != IntPtr.Zero)
-            {
-                SelectObject(memory, previous);
-                DeleteObject(hBitmap);
-            }
-            DeleteDC(memory);
             ReleaseDC(IntPtr.Zero, screen);
         }
     }
