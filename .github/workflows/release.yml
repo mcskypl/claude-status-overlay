@@ -26,6 +26,11 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      # npm ci dla mostka asystenta (Build-Release.ps1, krok 3b)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Ustal wersję
         id: version
         shell: pwsh

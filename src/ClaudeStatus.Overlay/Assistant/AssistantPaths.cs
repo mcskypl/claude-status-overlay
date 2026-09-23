@@ -37,6 +37,35 @@ internal static class AssistantPaths
         return null;
     }
 
+    /// <summary>Zmienna, którą mostek i skrypt podpowiedzi biorą za ścieżkę do Claude Code.</summary>
+    private const string ClaudeExeVariable = "CLAUDE_STATUS_CLAUDE_EXE";
+
+    /// <summary>
+    /// Claude Code zainstalowany u użytkownika: najpierw instalator natywny
+    /// (<c>~/.local/bin</c>), potem PATH. Wydanie nakładki nie niesie własnego
+    /// claude.exe - to ten sam program, którego i tak wymagają hooki, a do tego
+    /// sam się aktualizuje.
+    /// </summary>
+    public static string? FindClaude()
+    {
+        var native = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "claude.exe");
+        if (File.Exists(native)) return native;
+        return FindOnPath("claude.exe");
+    }
+
+    /// <summary>
+    /// claude.exe z pakietu SDK w node_modules mostka - jest tylko przy pracy ze
+    /// źródeł (npm install), w wydaniu go wycinamy.
+    /// </summary>
+    private static bool HasBundledClaude(string bridge) => File.Exists(Path.Combine(
+        Path.GetDirectoryName(bridge)!, "node_modules", "@anthropic-ai", "claude-agent-sdk-win32-x64", "claude.exe"));
+
+    private static void SetClaude(ProcessStartInfo info)
+    {
+        if (FindClaude() is { } claude) info.Environment[ClaudeExeVariable] = claude;
+    }
+
     /// <summary>Plik podręczny z podpowiedziami na pusty ekran - liczenie ich trwa kilkadziesiąt sekund.</summary>
     public static string SuggestionsCache => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -71,6 +100,7 @@ internal static class AssistantPaths
             StandardErrorEncoding = Utf8NoBom,
         };
         info.Environment[HookProcessor.SilenceVariable] = HookProcessor.SilenceValue;
+        SetClaude(info);
         info.ArgumentList.Add(script);
         info.ArgumentList.Add("--cwd");
         info.ArgumentList.Add(workingDirectory);
@@ -80,20 +110,7 @@ internal static class AssistantPaths
     /// <summary>Pełna ścieżka do node.exe albo null, gdy nie ma go ani w PATH, ani w Program Files.</summary>
     public static string? FindNode()
     {
-        var fromPath = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
-        foreach (var dir in fromPath)
-        {
-            if (string.IsNullOrWhiteSpace(dir)) continue;
-            try
-            {
-                var exe = Path.Combine(dir.Trim(), "node.exe");
-                if (File.Exists(exe)) return exe;
-            }
-            catch (ArgumentException)
-            {
-                // wpis w PATH z niedozwolonym znakiem - pomijamy, to nie nasz problem
-            }
-        }
+        if (FindOnPath("node.exe") is { } fromPath) return fromPath;
 
         foreach (var root in new[]
                  {
@@ -105,6 +122,25 @@ internal static class AssistantPaths
             if (File.Exists(exe)) return exe;
         }
 
+        return null;
+    }
+
+    private static string? FindOnPath(string file)
+    {
+        var fromPath = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        foreach (var dir in fromPath)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            try
+            {
+                var exe = Path.Combine(dir.Trim(), file);
+                if (File.Exists(exe)) return exe;
+            }
+            catch (ArgumentException)
+            {
+                // wpis w PATH z niedozwolonym znakiem - pomijamy, to nie nasz problem
+            }
+        }
         return null;
     }
 
@@ -128,9 +164,15 @@ internal static class AssistantPaths
             problem = "Nie znaleziono Node.js. Asystent potrzebuje go do uruchomienia mostka.";
             return false;
         }
-        if (FindBridge() is null)
+        if (FindBridge() is not { } bridge)
         {
             problem = "Nie znaleziono assistant-bridge/index.mjs obok aplikacji.";
+            return false;
+        }
+        if (FindClaude() is null && !HasBundledClaude(bridge))
+        {
+            problem = "Nie znaleziono Claude Code (claude.exe w ~\\.local\\bin ani w PATH). "
+                    + "Asystent korzysta z zainstalowanego Claude Code - zainstaluj go i uruchom nakładkę ponownie.";
             return false;
         }
         if (!File.Exists(Path.Combine(UiDirectory, "index.html")))
@@ -170,6 +212,7 @@ internal static class AssistantPaths
         // Wyciszamy go w całym poddrzewie procesów: stan tej jednej sesji nakładka
         // zna z pierwszej ręki i pokazuje go wprost, bez objazdu przez plik.
         info.Environment[HookProcessor.SilenceVariable] = HookProcessor.SilenceValue;
+        SetClaude(info);
 
         info.ArgumentList.Add(FindBridge()!);
         info.ArgumentList.Add("--cwd");

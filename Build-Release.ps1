@@ -61,6 +61,31 @@ foreach ($proj in @('src\ClaudeStatus.Overlay', 'src\ClaudeStatus.Hook')) {
 }
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $appDir -Force -ErrorAction SilentlyContinue
 
+# --- 3b. mostek asystenta ---------------------------------------------------
+# Skrypty Node i ich zależności obok exe. Bez pakietów opcjonalnych: to one
+# niosą natywny claude.exe (~230 MB na platformę), a wydanie korzysta z Claude
+# Code zainstalowanego u użytkownika (AssistantPaths.FindClaude).
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    throw 'Brak npm w PATH. Zainstaluj Node.js: https://nodejs.org'
+}
+
+$bridgeSrc = Join-Path $root 'assistant-bridge'
+$bridgeDst = Join-Path $appDir 'assistant-bridge'
+New-Item -ItemType Directory -Path $bridgeDst -Force | Out-Null
+foreach ($file in @('index.mjs', 'suggest.mjs', 'package.json', 'package-lock.json')) {
+    Copy-Item -LiteralPath (Join-Path $bridgeSrc $file) -Destination $bridgeDst -Force
+}
+
+Write-Host '  npm ci (mostek asystenta)' -ForegroundColor DarkGray
+Push-Location $bridgeDst
+try {
+    & npm ci --omit=dev --omit=optional --no-audit --no-fund --loglevel=error
+    if ($LASTEXITCODE -ne 0) { throw "npm ci nie powiódł się ($LASTEXITCODE)" }
+}
+finally {
+    Pop-Location
+}
+
 # --- 4. zip portable --------------------------------------------------------
 $zip = Join-Path $publish "ClaudeStatusOverlay-$Version-portable.zip"
 Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zip -CompressionLevel Optimal

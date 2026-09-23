@@ -38,6 +38,11 @@ const cwd = arg('cwd', join(homedir(), '.claude', 'assistant'));
 const resume = arg('resume', undefined);
 const model = arg('model', undefined);
 
+// Claude Code zainstalowany u uzytkownika. Wydanie nakladki nie niesie wlasnego
+// claude.exe (to ~230 MB), wiec nakladka podaje sciezke do tego, ktory jest.
+// Bez niej SDK siega po binarke z node_modules - tak jest przy pracy ze zrodel.
+const claudeExe = process.env.CLAUDE_STATUS_CLAUDE_EXE || undefined;
+
 // ------------------------------------------------------------------ wyjscie
 
 function send(obj) {
@@ -225,6 +230,7 @@ async function main() {
       cwd,
       resume: resume ?? undefined,
       model: model ?? undefined,
+      pathToClaudeCodeExecutable: claudeExe,
       settingSources: ['user', 'project', 'local'],
       mcpServers: readUserMcpServers(),
       canUseTool,

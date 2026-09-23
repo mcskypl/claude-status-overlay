@@ -19,6 +19,8 @@ function arg(name, fallback) {
 
 const cwd = arg('cwd', join(homedir(), '.claude', 'assistant'));
 const model = arg('model', 'haiku');
+// Ten sam Claude Code, co w mostku - zobacz index.mjs.
+const claudeExe = process.env.CLAUDE_STATUS_CLAUDE_EXE || undefined;
 
 const MAX_FILES = 40;
 const MAX_PROMPTS = 60;
@@ -96,6 +98,7 @@ async function suggest(prompts) {
     options: {
       cwd,
       model,
+      pathToClaudeCodeExecutable: claudeExe,
       systemPrompt: SYSTEM,
       // Zadnych narzedzi ani serwerow MCP - samo laczenie z konektorami
       // claude.ai potrafi trwac dluzej niz cala odpowiedz.
